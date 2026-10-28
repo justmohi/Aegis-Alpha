@@ -510,10 +510,16 @@ export async function getTwelveDataTimeSeries(options: {
     let isStale = false;
     let staleReason: string | undefined;
 
-    // For intraday (M1-M30), if data is older than 60 mins during a weekday, flag stale warning
-    if ((tdInterval === '15min' || tdInterval === '5min' || tdInterval === '1min') && ageMinutes > 60) {
+    // Provider OHLC timestamps generally label the candle opening time. Account for the
+    // expected interval before flagging the feed stale, and include the larger intraday intervals.
+    const intervalMinutes: Record<string, number> = {
+      '1min': 1, '5min': 5, '15min': 15, '30min': 30, '1h': 60, '4h': 240, '1day': 1440,
+    };
+    const barAgeMinutes = ageMinutes - (intervalMinutes[tdInterval] || 15);
+    const staleThresholdMinutes = Math.max(60, (intervalMinutes[tdInterval] || 15) * 3);
+    if (barAgeMinutes > staleThresholdMinutes) {
       isStale = true;
-      staleReason = `Latest candle timestamp is ${latestCandle.time} (market may be closed for weekend or session break).`;
+      staleReason = `Latest candle opened at ${latestCandle.time}; data is approximately ${Math.round(Math.max(0, barAgeMinutes))} minutes old. The market session may be closed or the feed delayed.`;
     }
 
     latestDiagnostics = {
