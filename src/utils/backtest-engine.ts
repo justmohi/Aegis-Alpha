@@ -143,7 +143,7 @@ export function runStrategyBacktest(
       if (inTrade.direction === 'BUY') {
         // Check SL first for conservative risk evaluation
         if (bar.low <= inTrade.stopLoss) {
-          exitPrice = inTrade.stopLoss - (params.slippagePips * 0.0001);
+          exitPrice = inTrade.stopLoss - (params.slippagePips * ((INSTRUMENT_SPECS[params.symbol] || INSTRUMENT_SPECS.EURUSD).pipSize));
           exitReason = 'STOP_LOSS';
           outcome = 'LOSS';
           closed = true;
@@ -152,7 +152,7 @@ export function runStrategyBacktest(
           exitReason = 'TP2';
           outcome = 'WIN';
           closed = true;
-        } else if (bar.high >= inTrade.takeProfit1 && i % 3 === 0) {
+        } else if (bar.high >= inTrade.takeProfit1) {
           exitPrice = inTrade.takeProfit1;
           exitReason = 'TP1';
           outcome = 'WIN';
@@ -161,7 +161,7 @@ export function runStrategyBacktest(
       } else {
         // SELL
         if (bar.high >= inTrade.stopLoss) {
-          exitPrice = inTrade.stopLoss + (params.slippagePips * 0.0001);
+          exitPrice = inTrade.stopLoss + (params.slippagePips * ((INSTRUMENT_SPECS[params.symbol] || INSTRUMENT_SPECS.EURUSD).pipSize));
           exitReason = 'STOP_LOSS';
           outcome = 'LOSS';
           closed = true;
@@ -170,7 +170,7 @@ export function runStrategyBacktest(
           exitReason = 'TP2';
           outcome = 'WIN';
           closed = true;
-        } else if (bar.low <= inTrade.takeProfit1 && i % 3 === 0) {
+        } else if (bar.low <= inTrade.takeProfit1) {
           exitPrice = inTrade.takeProfit1;
           exitReason = 'TP1';
           outcome = 'WIN';
