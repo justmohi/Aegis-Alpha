@@ -55,6 +55,7 @@ export const InteractiveChart: React.FC<InteractiveChartProps> = ({
   const [provider, setProvider] = useState<string>('Twelve Data Financial Feed');
   const [isStale, setIsStale] = useState<boolean>(false);
   const [staleReason, setStaleReason] = useState<string | null>(null);
+  const [feedError, setFeedError] = useState<string | null>(null);
   const [isCached, setIsCached] = useState<boolean>(false);
   const [autoRefresh, setAutoRefresh] = useState<boolean>(true);
 
@@ -83,14 +84,21 @@ export const InteractiveChart: React.FC<InteractiveChartProps> = ({
         setProvider(data.provider || 'Twelve Data Financial Feed');
         setIsStale(Boolean(data.isStale));
         setStaleReason(data.staleReason || null);
+        setFeedError(null);
         setIsCached(Boolean(data.cached));
       } else {
         setCandles([]);
         setLastUpdate('');
         setIsStale(false);
-        setStaleReason(data.error || 'No verified market candles were returned.');
+        const message = data.error || 'No verified market candles were returned.';
+        setStaleReason(message);
+        setFeedError(message);
       }
     } catch (e) {
+      const message = e instanceof Error ? e.message : 'Unable to reach the market-data backend.';
+      setCandles([]);
+      setLastUpdate('');
+      setFeedError(message);
       console.error('Failed to load market data', e);
     } finally {
       setIsLoading(false);
