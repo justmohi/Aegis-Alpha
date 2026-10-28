@@ -99,7 +99,7 @@ export const TickerBar: React.FC = () => {
           <div className="flex items-center space-x-1.5 text-slate-500">
             <span
               className={`w-2 h-2 rounded-full ${
-                isConfigured ? 'bg-emerald-500 animate-pulse' : 'bg-amber-400'
+                hasVerifiedQuote ? 'bg-emerald-500 animate-pulse' : 'bg-amber-400'
               }`}
             />
             <span className="text-[11px] text-slate-400 font-sans font-medium uppercase tracking-wider">
