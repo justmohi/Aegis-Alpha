@@ -655,20 +655,60 @@ export async function getTwelveDataQuote(symbol: string): Promise<{
       };
     }
 
+    const parsedPrice = Number.parseFloat(data.close || data.price || '');
+    const parsedTimestamp = data.datetime;
+    if (!Number.isFinite(parsedPrice) || parsedPrice <= 0 || !parsedTimestamp || Number.isNaN(new Date(parsedTimestamp).getTime())) {
+      latestDiagnostics = {
+        ...latestDiagnostics,
+        backendReachable: true,
+        apiKeyConfigured: true,
+        providerRequestStatus: '200 OK (Invalid Quote Payload)',
+        symbolRequested: tdSymbol,
+        latestDataTimestamp: null,
+        candleCount: 0,
+        providerErrorCategory: 'INSUFFICIENT_DATA',
+        providerErrorMessage: 'Twelve Data returned a response without a valid positive price and provider timestamp.',
+        testedAt: new Date().toISOString(),
+        provider: 'Twelve Data Financial Feed',
+      };
+      return {
+        success: false,
+        provider: 'Twelve Data',
+        lastUpdate: new Date().toISOString(),
+        error: 'Provider quote did not contain a verifiable price and timestamp.',
+        errorCode: 502,
+        errorCategory: 'INSUFFICIENT_DATA',
+      };
+    }
+
     const quote: QuoteData = {
       symbol: tdSymbol,
       name: data.name || tdSymbol,
-      price: parseFloat(data.close || data.price || '0'),
-      change: parseFloat(data.change || '0'),
-      percentChange: parseFloat(data.percent_change || '0'),
-      high: parseFloat(data.high || '0'),
-      low: parseFloat(data.low || '0'),
-      open: parseFloat(data.open || '0'),
-      previousClose: parseFloat(data.previous_close || '0'),
-      volume: parseFloat(data.volume || '0'),
-      timestamp: data.datetime || new Date().toISOString(),
+      price: parsedPrice,
+      change: Number.parseFloat(data.change || '0') || 0,
+      percentChange: Number.parseFloat(data.percent_change || '0') || 0,
+      high: Number.parseFloat(data.high || '0') || 0,
+      low: Number.parseFloat(data.low || '0') || 0,
+      open: Number.parseFloat(data.open || '0') || 0,
+      previousClose: Number.parseFloat(data.previous_close || '0') || 0,
+      volume: Number.parseFloat(data.volume || '0') || 0,
+      timestamp: parsedTimestamp,
       isMarketOpen: Boolean(data.is_market_open),
       provider: 'Twelve Data',
+    };
+
+    latestDiagnostics = {
+      ...latestDiagnostics,
+      backendReachable: true,
+      apiKeyConfigured: true,
+      providerRequestStatus: '200 OK',
+      symbolRequested: tdSymbol,
+      latestDataTimestamp: parsedTimestamp,
+      candleCount: 0,
+      providerErrorCategory: 'NONE',
+      providerErrorMessage: null,
+      testedAt: new Date().toISOString(),
+      provider: 'Twelve Data Financial Feed',
     };
 
     memoryCache.set(cacheKey, {
