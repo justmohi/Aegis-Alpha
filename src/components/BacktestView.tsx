@@ -17,7 +17,7 @@ import { BacktestParams, BacktestResult, Candle, runStrategyBacktest } from '../
 
 export const BacktestView: React.FC = () => {
   const [symbol, setSymbol] = useState('EURUSD');
-  const [strategy, setStrategy] = useState('Smart Money Concepts (SMC) & Liquidity Sweep');
+  const [strategy, setStrategy] = useState('SMA20/SMA50 Trend + 5-Candle Breakout');
   const [initialBalance, setInitialBalance] = useState(10000);
   const [riskPercent, setRiskPercent] = useState(1.0);
   const [spreadPips, setSpreadPips] = useState(0.8);
@@ -26,31 +26,28 @@ export const BacktestView: React.FC = () => {
 
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [isRunning, setIsRunning] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [dataMessage, setDataMessage] = useState<string | null>(null);
 
-  // Generate 120 historical candles for the simulation
-  const runSimulation = () => {
+  // Backtest strictly on real provider OHLC candles; never generate synthetic prices.
+  const runSimulation = async () => {
     setIsRunning(true);
-    setTimeout(() => {
-      const candles: Candle[] = [];
-      const now = Date.now();
-      const basePrice = symbol === 'XAUUSD' ? 2730.0 : symbol === 'BTCUSD' ? 68000.0 : 1.0840;
-      const volatility = symbol === 'XAUUSD' ? 6.0 : symbol === 'BTCUSD' ? 450.0 : 0.0018;
-
-      let current = basePrice;
-      for (let i = 120; i >= 0; i--) {
-        const time = new Date(now - i * 900000).toISOString();
-        const cycle = Math.sin(i * 0.15) + Math.cos(i * 0.3) * 0.7;
-        const change = cycle * volatility * 0.5 + (Math.random() - 0.48) * volatility;
-        const open = current;
-        const close = open + change;
-        const high = Math.max(open, close) + Math.random() * volatility * 0.4;
-        const low = Math.min(open, close) - Math.random() * volatility * 0.4;
-        const volume = Math.floor(2000 + Math.random() * 8000);
-
-        candles.push({ time, open, high, low, close, volume });
-        current = close;
+    setErrorMessage(null);
+    setDataMessage(null);
+    setResult(null);
+    try {
+      const response = await fetch(
+        `/api/market-data?symbol=${encodeURIComponent(symbol)}&timeframe=M15&outputsize=500`
+      );
+      const payload = await response.json();
+      if (!response.ok || !payload.success || !Array.isArray(payload.candles)) {
+        throw new Error(payload.error || `Historical market data unavailable (HTTP ${response.status}). Verify the provider configuration first.`);
+      }
+      if (payload.candles.length < 60) {
+        throw new Error(`Only ${payload.candles.length} real candles were returned. At least 60 are required for this backtest.`);
       }
 
+      const candles = payload.candles as Candle[];
       const simResult = runStrategyBacktest(candles, {
         symbol,
         strategyName: strategy,
@@ -61,10 +58,13 @@ export const BacktestView: React.FC = () => {
         commissionPerLot: commission,
         minRiskReward: 1.5,
       });
-
       setResult(simResult);
+      setDataMessage(`Source: ${payload.provider || 'Configured market provider'} • ${candles.length} actual OHLC candles • newest candle: ${candles[candles.length - 1]?.time || 'timestamp unavailable'}`);
+    } catch (error: any) {
+      setErrorMessage(error?.message || 'Backtest failed because historical market data could not be retrieved.');
+    } finally {
       setIsRunning(false);
-    }, 600);
+    }
   };
 
   const resetBacktest = () => {
@@ -85,7 +85,7 @@ export const BacktestView: React.FC = () => {
             </h2>
           </div>
           <p className="text-xs text-slate-400 mt-1">
-            Simulate evidence-based trade execution on historical OHLCV data with realistic spread, slippage, and zero lookahead bias.
+            Test the baseline SMA20/SMA50 trend and recent-range breakout rules on real provider OHLC candles. Synthetic prices are never generated.
           </p>
         </div>
 
@@ -106,7 +106,7 @@ export const BacktestView: React.FC = () => {
             className="px-4 py-1.5 rounded text-xs font-mono font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 flex items-center space-x-1.5 shadow-lg shadow-amber-500/10 transition-colors"
           >
             <Play className={`w-3.5 h-3.5 ${isRunning ? 'animate-spin' : ''}`} />
-            <span>{isRunning ? 'SIMULATING TRADES...' : 'RUN HISTORICAL BACKTEST'}</span>
+            <span>{isRunning ? 'FETCHING REAL CANDLES...' : 'RUN HISTORICAL BACKTEST'}</span>
           </button>
         </div>
       </div>
@@ -133,8 +133,7 @@ export const BacktestView: React.FC = () => {
             onChange={(e) => setStrategy(e.target.value)}
             className="w-full bg-[#101726] border border-[#1f2d48] text-slate-100 rounded px-2.5 py-1 text-xs truncate"
           >
-            <option value="SMC Order Block & Liquidity Sweep">SMC & Liquidity Sweep</option>
-            <option value="Breakout & Volatility Expansion">Breakout Expansion</option>
+            <option value="SMA20/SMA50 Trend + 5-Candle Breakout">SMA20/SMA50 + Range Breakout</option>
           </select>
         </div>
 
@@ -182,6 +181,17 @@ export const BacktestView: React.FC = () => {
         </div>
       </div>
 
+      {errorMessage && (
+        <div role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-xs text-rose-200">
+          <strong className="block mb-1">Backtest not run</strong>{errorMessage}
+        </div>
+      )}
+      {dataMessage && (
+        <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 text-xs text-emerald-200">
+          {dataMessage}
+        </div>
+      )}
+
       {/* Honest Empty State if no simulation has been run */}
       {!result ? (
         <div className="border border-dashed border-slate-800 rounded-xl p-12 text-center bg-[#070b16]/60 space-y-3">
@@ -192,8 +202,8 @@ export const BacktestView: React.FC = () => {
             No Historical Test Run Yet
           </h3>
           <p className="text-xs text-slate-400 max-w-md mx-auto">
-            Per institutional standards, performance metrics are never fabricated. Click{' '}
-            <strong className="text-amber-300">Run Historical Backtest</strong> above to execute a bar-by-bar simulation across 120 historical candles.
+            Performance results require real provider candles. Click{' '}
+            <strong className="text-amber-300">Run Historical Backtest</strong> to fetch up to 500 actual M15 OHLC candles. If the provider is disconnected or history is insufficient, no metrics will be shown.
           </p>
         </div>
       ) : (

@@ -77,13 +77,18 @@ export const InteractiveChart: React.FC<InteractiveChartProps> = ({
     try {
       const res = await fetch(`/api/market-data?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}`);
       const data = await res.json();
-      if (res.ok && data.candles) {
-        setCandles(data.candles || []);
-        setLastUpdate(data.lastUpdate || new Date().toISOString());
+      if (res.ok && data.success && Array.isArray(data.candles) && data.candles.length > 0) {
+        setCandles(data.candles);
+        setLastUpdate(data.candles[data.candles.length - 1]?.time || data.lastUpdate || '');
         setProvider(data.provider || 'Twelve Data Financial Feed');
         setIsStale(Boolean(data.isStale));
         setStaleReason(data.staleReason || null);
         setIsCached(Boolean(data.cached));
+      } else {
+        setCandles([]);
+        setLastUpdate('');
+        setIsStale(false);
+        setStaleReason(data.error || 'No verified market candles were returned.');
       }
     } catch (e) {
       console.error('Failed to load market data', e);

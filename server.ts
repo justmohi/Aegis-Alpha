@@ -124,6 +124,8 @@ app.get('/api/symbol-search', async (req: Request, res: Response) => {
 app.get('/api/market-data', async (req: Request, res: Response) => {
   const symbol = (req.query.symbol as string) || 'EUR/USD';
   const timeframe = (req.query.timeframe as string) || 'M15';
+  const rawOutputsize = Number.parseInt(String(req.query.outputsize || '50'), 10);
+  const outputsize = Number.isFinite(rawOutputsize) ? Math.min(500, Math.max(20, rawOutputsize)) : 50;
 
   const tdConfigured = isTwelveDataConfigured();
 
@@ -145,7 +147,7 @@ app.get('/api/market-data', async (req: Request, res: Response) => {
   const result = await getTwelveDataTimeSeries({
     symbol,
     interval: timeframe,
-    outputsize: 50,
+    outputsize,
   });
 
   if (!result.success) {
@@ -198,10 +200,13 @@ app.post('/api/analyze-live', async (req: Request, res: Response) => {
       timeframe = 'M15',
       tradingStyle = 'Day Trading',
       analysisType = 'Smart Money Concepts (SMC)',
-      riskRewardTarget = 2.0,
+      riskRewardTarget: requestedRiskReward = 2.0,
       includeHTF = true,
       candles: providedCandles,
     } = req.body;
+    const riskRewardTarget = Number.isFinite(Number(requestedRiskReward))
+      ? Math.min(5, Math.max(1, Number(requestedRiskReward)))
+      : 2.0;
 
     let primaryCandles = providedCandles;
     let h1Candles = undefined;
@@ -234,7 +239,7 @@ app.post('/api/analyze-live', async (req: Request, res: Response) => {
       feedStaleReason = primaryRes.staleReason;
 
       // Multi-timeframe fetch if requested and timeframe is LTF
-      if (includeHTF && (timeframe === 'M5' || timeframe === 'M15' || timeframe === 'M30')) {
+      if (includeHTF && (timeframe === 'M1' || timeframe === 'M5' || timeframe === 'M15' || timeframe === 'M30')) {
         try {
           const h1Res = await getTwelveDataTimeSeries({ symbol, interval: '1h', outputsize: 30 });
           if (h1Res.success) h1Candles = h1Res.candles;
@@ -256,8 +261,8 @@ app.post('/api/analyze-live', async (req: Request, res: Response) => {
     }
 
     // Check H1 and H4 retrieval separately (Requirement 9)
-    const h1Available = Boolean(h1Candles && h1Candles.length >= 10);
-    const h4Available = Boolean(h4Candles && h4Candles.length >= 10);
+    const h1Available = Boolean(h1Candles && h1Candles.length >= 20);
+    const h4Available = Boolean(h4Candles && h4Candles.length >= 20);
     const htfFullyVerified = includeHTF ? (h1Available && h4Available) : true;
     const hasSufficientCandles = primaryCandles && primaryCandles.length >= 20;
 
@@ -272,13 +277,17 @@ app.post('/api/analyze-live', async (req: Request, res: Response) => {
         confidenceScore: isFeedStale ? 35 : 20,
         confidenceBreakdown: {
           trendAlignment: 0,
-          structureQuality: 0,
-          volumeFlow: 0,
-          rsiConfluence: 0,
-          htfAlignment: 0,
+          marketStructure: 0,
+          liquidityConfirmation: 0,
+          entryTrigger: 0,
+          riskReward: 0,
+          dataQuality: 0,
         },
-        setupStatus: 'INVALID',
+        setupStatus: 'Invalidated setup',
+        symbol,
+        timeframe,
         referencePrice: refPrice,
+        referenceTime: primaryCandles?.[primaryCandles.length - 1]?.time || new Date().toISOString(),
         marketStructure: {
           trend: 'Neutral / Range',
           structureType: 'CONSOLIDATION',
@@ -292,7 +301,7 @@ app.post('/api/analyze-live', async (req: Request, res: Response) => {
         liquiditySweeps: [],
         orderBlocks: [],
         fairValueGaps: [],
-        supportResistance: { supports: [], resistances: [] },
+        supportResistance: [],
         indicators: { ema20: null, ema50: null, ema200: null, rsi14: null, macd: null, atr14: null },
         tradePlan: null,
         decisionRationale: [
@@ -309,6 +318,7 @@ app.post('/api/analyze-live', async (req: Request, res: Response) => {
         invalidationConditions: [
           'Market session closed or feed disconnected.',
         ],
+        limitations: ['Signal generation is blocked while the feed is stale or candle history is insufficient.'],
       };
     } else {
       deterministicSignal = generateDeterministicSignal({
@@ -322,12 +332,13 @@ app.post('/api/analyze-live', async (req: Request, res: Response) => {
 
       // Requirement 9: Never claim multi-timeframe confirmation when corresponding candle data has not been retrieved
       if (includeHTF && !htfFullyVerified) {
-        deterministicSignal.confidenceScore = Math.min(deterministicSignal.confidenceScore, 65);
-        deterministicSignal.confidenceBreakdown.htfAlignment = 0;
+        deterministicSignal.decision = 'WAIT';
+        deterministicSignal.setupStatus = 'Pending confirmation';
+        deterministicSignal.tradePlan = null;
+        deterministicSignal.confidenceScore = Math.min(deterministicSignal.confidenceScore, 50);
+        deterministicSignal.confidenceBreakdown.dataQuality = Math.min(deterministicSignal.confidenceBreakdown.dataQuality, 3);
         deterministicSignal.decisionRationale.push(
-          `Notice: Higher Timeframe (H1/H4) confirmation could not be verified from provider feed (H1: ${
-            h1Available ? 'Retrieved' : 'Unavailable'
-          }, H4: ${h4Available ? 'Retrieved' : 'Unavailable'}). Setup confidence reduced accordingly.`
+          `WAIT enforced: H1/H4 confirmation could not be verified (H1: ${h1Available ? 'Retrieved' : 'Unavailable'}, H4: ${h4Available ? 'Retrieved' : 'Unavailable'}). No trade plan is issued until selected confirmation data is available.`
         );
       }
     }
@@ -479,8 +490,9 @@ app.post('/api/analyze-chart', async (req: Request, res: Response) => {
     const ai = getGenAI();
 
     const imageParts = images.map((img: { data: string; mimeType?: string; timeframe?: string }) => {
+      const dataUrlMime = /^data:(image\/(?:png|jpeg|webp));base64,/i.exec(img.data)?.[1];
       const base64Data = img.data.includes('base64,') ? img.data.split('base64,')[1] : img.data;
-      const mimeType = img.mimeType || 'image/png';
+      const mimeType = img.mimeType || dataUrlMime || 'image/png';
       return {
         inlineData: {
           data: base64Data,
@@ -544,109 +556,20 @@ Return a valid JSON object matching the standard signal schema.
       }
     }
 
-    // High-fidelity institutional analysis fallback when API key is not yet set
-    const fallbackResult = generateDeterministicFallback({
-      instrument,
-      timeframe,
-      userCurrentPrice,
+    // Never fabricate screenshot analysis or return a synthetic BUY when AI is unavailable.
+    return res.status(ai ? 502 : 503).json({
+      error: ai
+        ? 'Chart analysis failed because the AI provider request failed. Check server diagnostics and retry.'
+        : 'Screenshot analysis requires GEMINI_API_KEY in server-side secrets. No synthetic signal was generated.',
+      decision: 'WAIT',
+      provider: 'Gemini (unavailable)',
+      isLiveVerified: false,
     });
-
-    return res.json(fallbackResult);
   } catch (error: any) {
     console.error('Analysis error:', error);
     res.status(500).json({ error: 'Chart analysis failed: ' + (error.message || 'Unknown error') });
   }
 });
-
-function generateDeterministicFallback(params: {
-  instrument: string;
-  timeframe: string;
-  userCurrentPrice?: number;
-}) {
-  const { instrument, timeframe } = params;
-  const spec = INSTRUMENT_SPECS[instrument] || { precision: 2, pipFactor: 100 };
-  const currentPrice = params.userCurrentPrice || 1.08450;
-  const stopDist = instrument.includes('JPY') ? 0.35 : instrument.includes('XAU') ? 10.0 : 0.0022;
-
-  const entry = currentPrice;
-  const sl = Number((entry - stopDist).toFixed(spec.precision));
-  const tp1 = Number((entry + stopDist * 1.5).toFixed(spec.precision));
-  const tp2 = Number((entry + stopDist * 2.8).toFixed(spec.precision));
-
-  return {
-    decision: 'BUY',
-    confidenceScore: 84,
-    confidenceBreakdown: {
-      trendAlignment: 18,
-      marketStructure: 17,
-      liquidityConfirmation: 18,
-      entryTrigger: 12,
-      riskReward: 13,
-      dataQuality: 6,
-    },
-    setupStatus: 'Confirmed setup',
-    instrument,
-    timeframe,
-    detectedCurrentPrice: currentPrice,
-    trendDirection: 'Bullish',
-    marketStructure: `Clean bullish expansion on ${timeframe}. Price created successive Higher Highs and validated Higher Low demand hold.`,
-    bosChochAnalysis: 'Break of Structure (BOS) confirmed above previous swing high with strong displacement candle.',
-    liquidityAnalysis: 'Sell-Side Liquidity (SSL) swept below previous session low before aggressive buy volume returned.',
-    supportResistance: [
-      { level: Number((entry - stopDist * 1.2).toFixed(spec.precision)), type: 'Support', strength: 'Major', notes: 'Institutional Order Block & Demand Zone' },
-      { level: tp1, type: 'Resistance', strength: 'Minor', notes: 'Intermediate supply & liquidity target (TP1)' },
-      { level: tp2, type: 'Resistance', strength: 'Major', notes: 'HTF Swing High liquidity pool (TP2)' },
-    ],
-    orderBlock: {
-      detected: true,
-      zoneMin: Number((entry - stopDist * 0.8).toFixed(spec.precision)),
-      zoneMax: Number((entry - stopDist * 0.2).toFixed(spec.precision)),
-      type: 'Bullish',
-      notes: 'Last down-candle prior to displacement impulse breaking structure.',
-    },
-    fairValueGap: {
-      detected: true,
-      zoneMin: Number((entry - stopDist * 0.4).toFixed(spec.precision)),
-      zoneMax: Number((entry + stopDist * 0.1).toFixed(spec.precision)),
-      status: 'Partially Filled',
-      notes: '3-candle imbalance (FVG) creating high-probability mitigation zone for re-entry.',
-    },
-    visibleIndicators: 'Visible 20 EMA dynamic support; volume expansion on up-thrust candles.',
-    tradePlan: {
-      entryZone: {
-        min: Number((entry - stopDist * 0.2).toFixed(spec.precision)),
-        max: Number((entry + stopDist * 0.1).toFixed(spec.precision)),
-        optimal: entry,
-      },
-      stopLoss: sl,
-      takeProfit1: tp1,
-      takeProfit2: tp2,
-      riskRewardRatioTP1: 1.5,
-      riskRewardRatioTP2: 2.8,
-      stopDistancePips: Math.round(stopDist * spec.pipFactor),
-    },
-    entryConfirmation: [
-      `Candle close holding above Bullish Order Block at ${Number((entry - stopDist * 0.2).toFixed(spec.precision))}`,
-      'Displacement candle body covering at least 70% of candle range',
-      'Lower-timeframe (M5) shift of structure confirming buyer control',
-    ],
-    invalidationConditions: [
-      `Hourly candle close below Stop Loss at ${sl}`,
-      'Aggressive high-volume sell sweep violating the structural demand base',
-      'High-impact central bank / macro economic release within 15 minutes of execution',
-    ],
-    decisionRationale: [
-      'Sell-side liquidity sweep engineered a clean institutional trap before impulsive continuation.',
-      'Displacement through previous swing high confirmed unbroken bullish order flow.',
-      'Calculated 1:2.8 risk-to-reward comfortably exceeds minimum institutional threshold (1:1.5).',
-    ],
-    limitations: [
-      'Analysis derived from visual chart geometry; verify real-time bid/ask spread before entering.',
-      'Economic calendar events (NFP, CPI, Rate Decisions) may introduce unexpected slippage.',
-    ],
-    isLiveVerified: false,
-  };
-}
 
 // -------------------------------------------------------------
 // STATIC APP & VITE SERVER STARTUP
