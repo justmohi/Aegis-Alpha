@@ -1,5 +1,5 @@
 import { Candle } from './backtest-engine.ts';
-import { INSTRUMENT_SPECS, calculatePips, calculateRiskReward } from './trading-math.ts';
+import { INSTRUMENT_SPECS, calculatePips, calculateRiskReward, normalizeInstrumentKey, getInstrumentSpec } from './trading-math.ts';
 
 export interface SwingPoint {
   index: number;
@@ -518,11 +518,12 @@ export function generateDeterministicSignal(params: {
   options?: { useM5Refinement?: boolean };
 }): DeterministicSignal {
   const { primaryCandles, h1Candles, h4Candles, symbol, timeframe, riskRewardTarget = 2.0 } = params;
+  const instrumentKey = normalizeInstrumentKey(symbol);
 
-  const spec = INSTRUMENT_SPECS[symbol] || {
+  const spec = getInstrumentSpec(symbol) || {
     symbol,
-    precision: symbol.includes('JPY') ? 3 : symbol.includes('USD') && !['BTCUSD', 'ETHUSD', 'XAUUSD', 'XAGUSD', 'US30'].includes(symbol) ? 5 : 2,
-    pipSize: symbol.includes('JPY') ? 0.01 : 0.0001,
+    precision: instrumentKey.includes('JPY') ? 3 : instrumentKey.includes('USD') && !['BTCUSD', 'ETHUSD', 'XAUUSD', 'XAGUSD', 'US30'].includes(instrumentKey) ? 5 : 2,
+    pipSize: instrumentKey.includes('JPY') ? 0.01 : (instrumentKey === 'XAUUSD' || instrumentKey === 'XAGUSD') ? 0.1 : 0.0001,
     contractSize: 100000,
     pipFactor: 10000,
   };
@@ -546,7 +547,7 @@ export function generateDeterministicSignal(params: {
   const curEMA20 = ema20[ema20.length - 1] || null;
   const curEMA50 = ema50.length >= 50 ? ema50[ema50.length - 1] : null;
   const curEMA200 = ema200.length >= 200 ? ema200[ema200.length - 1] : null;
-  const curRSI = rsi[rsi.length - 1] || 50;
+  const curRSI = Number.isFinite(rsi[rsi.length - 1]) ? rsi[rsi.length - 1] : 50;
   const curMACD = macd.hist[macd.hist.length - 1] !== undefined ? {
     macd: Number(macd.macd[macd.macd.length - 1].toFixed(5)),
     signal: Number(macd.signal[macd.signal.length - 1].toFixed(5)),
