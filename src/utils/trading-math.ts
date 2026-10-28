@@ -153,6 +153,18 @@ export const INSTRUMENT_SPECS: Record<string, InstrumentSpec> = {
 };
 
 /**
+ * Normalize display/provider symbols (XAU/USD) to the compact spec keys (XAUUSD).
+ */
+export function normalizeInstrumentKey(symbol: string): string {
+  return symbol.trim().toUpperCase().replace(/[\/_\-\s]/g, '');
+}
+
+/** Resolve specs for both compact keys and display symbols. */
+export function getInstrumentSpec(symbol: string): InstrumentSpec | undefined {
+  return INSTRUMENT_SPECS[normalizeInstrumentKey(symbol)];
+}
+
+/**
  * Calculates Risk to Reward ratio given entry, stop loss, and target price.
  * Returns null if the price direction is invalid (e.g. SL >= Entry for BUY).
  */
@@ -195,7 +207,7 @@ export function calculateRiskReward(
  * Calculate Stop Distance in pips based on instrument specification
  */
 export function calculatePips(symbol: string, distancePrice: number): number {
-  const spec = INSTRUMENT_SPECS[symbol] || { pipFactor: 10000 };
+  const spec = getInstrumentSpec(symbol) || { pipFactor: 10000 };
   return Number((Math.abs(distancePrice) * spec.pipFactor).toFixed(1));
 }
 
@@ -220,7 +232,8 @@ export function calculatePositionSize(params: {
   maxRiskLimitUSD?: number;
 }): PositionSizeResult {
   const { accountEquity, riskPercentage, symbol, entryPrice, stopLossPrice, maxRiskLimitUSD } = params;
-  const spec = INSTRUMENT_SPECS[symbol] || INSTRUMENT_SPECS.EURUSD;
+  const normalizedSymbol = normalizeInstrumentKey(symbol);
+  const spec = getInstrumentSpec(symbol) || INSTRUMENT_SPECS.EURUSD;
 
   let riskAmount = (accountEquity * riskPercentage) / 100;
   let maxDrawdownLimitHit = false;
@@ -249,14 +262,24 @@ export function calculatePositionSize(params: {
   // Gold (XAUUSD): 1 lot = 100 oz. 1 pip = 0.10 * 100 = $10.00.
   // Crypto (BTCUSD): 1 lot = 1 BTC. 1 point = $1.00.
   let pipValuePerLot = spec.pipSize * spec.contractSize;
-  if (symbol === 'USDJPY') {
+  if (normalizedSymbol === 'USDJPY') {
     // For USDJPY, pip value in USD = (0.01 / USDJPY price) * 100,000
     pipValuePerLot = (spec.pipSize / entryPrice) * spec.contractSize;
   }
 
   const rawLotSize = riskAmount / (stopPips * pipValuePerLot);
-  // Round to standard 2 decimal places (micro-lots 0.01)
-  const lotSize = Math.max(0.01, Number(rawLotSize.toFixed(2)));
+  // Do not force the 0.01 minimum if it would exceed the configured risk.
+  const lotSize = Number((Math.floor(rawLotSize * 100) / 100).toFixed(2));
+  if (lotSize < 0.01) {
+    return {
+      riskAmountUSD: Number(riskAmount.toFixed(2)),
+      stopDistancePips: stopPips,
+      lotSize: 0,
+      pipValueUSD: 0,
+      positionNotionalUSD: 0,
+      maxDrawdownLimitHit,
+    };
+  }
   const totalPipValue = Number((lotSize * pipValuePerLot).toFixed(2));
   const positionNotional = Number((lotSize * spec.contractSize * entryPrice).toFixed(2));
 
