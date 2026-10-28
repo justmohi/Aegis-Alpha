@@ -1,0 +1,6 @@
+{
+  "name": "Aegis Alpha - AI Trading Signal Analysis Terminal",
+  "description": "Institutional-grade AI chart analysis terminal providing evidence-based trade plans, multi-timeframe confirmation, risk management, and backtesting for Forex, Commodities, and Crypto.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
