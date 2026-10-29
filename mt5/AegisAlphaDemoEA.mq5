@@ -37,7 +37,7 @@ bool Request(string method,string route,string body,string &response,int &status
    if(InpEaToken=="") { Print("AEGIS: Configure InpEaToken before connecting."); return false; }
    string url=TrimSlash(InpBackendUrl)+route;
    char data[], result[]; string headers="Content-Type: application/json\r\nAuthorization: Bearer "+InpEaToken+"\r\n";
-   if(body!="") StringToCharArray(body,data,0,WHOLE_ARRAY,CP_UTF8);
+   if(body!="") { int copied=StringToCharArray(body,data,0,WHOLE_ARRAY,CP_UTF8); if(copied>0) ArrayResize(data,copied-1); }
    else ArrayResize(data,0);
    string responseHeaders;
    ResetLastError();
