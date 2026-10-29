@@ -65,23 +65,23 @@ void ProcessNextOrder() {
    double volume=StringToDouble(JsonValue(response,"volume"));
    double sl=StringToDouble(JsonValue(response,"stopLoss"));
    double tp=StringToDouble(JsonValue(response,"takeProfit"));
-   if(symbol!=InpTradeSymbol || volume<=0 || volume>InpMaxVolume || sl<=0 || tp<=0 || (side!="BUY" && side!="SELL")) {
+   if((symbol!="XAUUSD" && symbol!=InpTradeSymbol) || volume<=0 || volume>InpMaxVolume || sl<=0 || tp<=0 || (side!="BUY" && side!="SELL")) {
       string msg=StringFormat("{\"status\":\"REJECTED\",\"message\":\"EA validation failed: symbol/volume/SL/TP/side\",\"ticket\":null,\"executionPrice\":null}");
       Request("POST","/api/broker/mt5/orders/"+id+"/result",msg,response,code); return;
    }
-   double ask=SymbolInfoDouble(symbol,SYMBOL_ASK), bid=SymbolInfoDouble(symbol,SYMBOL_BID);
+   string tradeSymbol=InpTradeSymbol;\n   if(!SymbolSelect(tradeSymbol,true)) {\n      string msg="{\\"status\\":\\"REJECTED\\",\\"message\\":\\"Configured MT5 symbol is unavailable in Market Watch\\",\\"ticket\\":null,\\"executionPrice\\":null}";\n      Request("POST","/api/broker/mt5/orders/"+id+"/result",msg,response,code); return;\n   }\n   double ask=SymbolInfoDouble(tradeSymbol,SYMBOL_ASK), bid=SymbolInfoDouble(tradeSymbol,SYMBOL_BID);
    if(ask<=0 || bid<=0 || (side=="BUY" && (sl>=ask || tp<=ask)) || (side=="SELL" && (sl<=bid || tp>=bid))) {
       string msg="{\"status\":\"REJECTED\",\"message\":\"Invalid live quote or SL/TP direction\",\"ticket\":null,\"executionPrice\":null}";
       Request("POST","/api/broker/mt5/orders/"+id+"/result",msg,response,code); return;
    }
    MqlTradeRequest req={}; MqlTradeResult res={};
-   req.action=TRADE_ACTION_DEAL; req.symbol=symbol; req.volume=volume;
+   req.action=TRADE_ACTION_DEAL; req.symbol=tradeSymbol; req.volume=volume;
    req.type=(side=="BUY"?ORDER_TYPE_BUY:ORDER_TYPE_SELL);
    req.price=(side=="BUY"?ask:bid); req.sl=sl; req.tp=tp;
    req.deviation=InpMaxDeviationPoints; req.magic=26102901;
    req.comment="AegisAlpha Demo";
    req.type_time=ORDER_TIME_GTC;
-   long filling=SymbolInfoInteger(symbol,SYMBOL_FILLING_MODE);
+   long filling=SymbolInfoInteger(tradeSymbol,SYMBOL_FILLING_MODE);
    if((filling & SYMBOL_FILLING_FOK)==SYMBOL_FILLING_FOK) req.type_filling=ORDER_FILLING_FOK;
    else if((filling & SYMBOL_FILLING_IOC)==SYMBOL_FILLING_IOC) req.type_filling=ORDER_FILLING_IOC;
    else req.type_filling=ORDER_FILLING_RETURN;
