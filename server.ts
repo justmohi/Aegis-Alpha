@@ -17,6 +17,9 @@ import {
   DeterministicSignal,
 } from './src/utils/technical-analysis.ts';
 import { INSTRUMENT_SPECS } from './src/utils/trading-math.ts';
+import {
+  brokerStatus, heartbeat, createOrder, listOrders, claimNextOrder, updateOrder,
+} from './server/broker-store.ts';
 
 dotenv.config();
 
@@ -584,9 +587,6 @@ Return a valid JSON object matching the standard signal schema.
 // -------------------------------------------------------------
 // EXNESS MT5 DEMO-ONLY BROKER BRIDGE
 // -------------------------------------------------------------
-import {
-  brokerStatus, heartbeat, createOrder, listOrders, claimNextOrder, updateOrder,
-} from './server/broker-store.ts';
 
 function timingSafeSecretEquals(actual: string, expected: string | undefined): boolean {
   if (!expected || !actual) return false;
@@ -667,7 +667,7 @@ app.post('/api/broker/orders/approve', async (req: Request, res: Response) => {
     if (isLiveVerified !== true || isStale === true) return res.status(400).json({ error: 'Only fresh, live-verified market signals can be routed. Screenshot-only signals are not eligible.' });
     const timestamp = Date.parse(signalTimestamp);
     if (!Number.isFinite(timestamp) || Date.now() - timestamp > 120000 || timestamp > Date.now() + 5000) return res.status(400).json({ error: 'Signal is stale or timestamp is invalid. Run a fresh analysis.' });
-    if (!tradePlan || !tradePlan.entryZone || !Array.isArray([tradePlan.stopLoss, tradePlan.takeProfit1])) return res.status(400).json({ error: 'Missing trade plan.' });
+    if (!tradePlan || !tradePlan.entryZone || tradePlan.stopLoss == null || tradePlan.takeProfit1 == null) return res.status(400).json({ error: 'Missing trade plan.' });
     if (!/^XAUUSD(?:m|\.)?$/i.test(String(symbol || '').replace(/[\s/_-]/g, ''))) return res.status(400).json({ error: 'Demo MVP currently supports XAUUSD only. Check exact MT5 symbol suffix.' });
     const entry = Number(tradePlan.entryZone.optimal), sl = Number(tradePlan.stopLoss), tp = Number(tradePlan.takeProfit1);
     const vol = Number(volume ?? 0.01);
