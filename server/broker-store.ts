@@ -77,8 +77,9 @@ export async function brokerStatus() {
   ]);
   const terminal = state.rows[0]?.payload || null;
   const updatedAt = state.rows[0]?.updated_at ? new Date(state.rows[0].updated_at).toISOString() : null;
-  const fresh = Boolean(updatedAt && Date.now() - new Date(updatedAt).getTime() < 60000 && terminal?.demo === true);
-  return { enabled: process.env.BROKER_DEMO_ENABLED === 'true', mode: 'DEMO_ONLY', databaseConfigured: true, terminalConnected: fresh, terminal, terminalUpdatedAt: updatedAt, counts: Object.fromEntries(counts.rows.map((r: any) => [r.status, r.count])) };
+  const fresh = Boolean(updatedAt && Date.now() - new Date(updatedAt).getTime() < 60000 && terminal?.demo === true && terminal?.connected === true);
+  const safeTerminal = terminal ? { ...terminal, login: terminal.login ? '••••' + String(terminal.login).slice(-2) : '' } : null;
+  return { enabled: process.env.BROKER_DEMO_ENABLED === 'true', mode: 'DEMO_ONLY', databaseConfigured: true, terminalConnected: fresh, terminal: safeTerminal, terminalUpdatedAt: updatedAt, counts: Object.fromEntries(counts.rows.map((r: any) => [r.status, r.count])) };
 }
 
 export async function heartbeat(payload: any) {
