@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Clock, RefreshCw, ShieldCheck, Wifi, WifiOff } from 'lucide-react';
 import type { SignalAnalysisResult } from '../types/trading';
 
+const API_BASE = (import.meta as any).env?.VITE_API_BASE_URL || 'https://aegis-alpha-4ttu.onrender.com';
+
 type BrokerStatus = {
   enabled?: boolean; mode?: string; databaseConfigured?: boolean; terminalConnected?: boolean;
   terminal?: { demo?: boolean; server?: string; login?: string; company?: string; symbol?: string; connected?: boolean } | null;
@@ -25,11 +27,11 @@ export const BrokerPanel: React.FC<{ signal: SignalAnalysisResult | null }> = ({
   const refresh = useCallback(async () => {
     setLoading(true); setError('');
     try {
-      const s = await fetch('/api/broker/status');
+      const s = await fetch(`${API_BASE}/api/broker/status`);
       const sd = await s.json();
       setStatus(sd);
       if (adminToken) {
-        const o = await fetch('/api/broker/orders', { headers: { 'x-broker-admin-token': adminToken } });
+        const o = await fetch(`${API_BASE}/api/broker/orders`, { headers: { 'x-broker-admin-token': adminToken } });
         const od = await o.json();
         if (!o.ok) throw new Error(od.error || 'Could not load broker orders.');
         setOrders(od.orders || []);
@@ -44,7 +46,7 @@ export const BrokerPanel: React.FC<{ signal: SignalAnalysisResult | null }> = ({
     if (!signal || !adminToken) { setError('Admin token and current signal are required.'); return; }
     setLoading(true); setError(''); setMessage('');
     try {
-      const response = await fetch('/api/broker/orders/approve', {
+      const response = await fetch(`${API_BASE}/api/broker/orders/approve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-broker-admin-token': adminToken },
         body: JSON.stringify({
