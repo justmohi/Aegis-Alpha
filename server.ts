@@ -17,6 +17,9 @@ import {
   DeterministicSignal,
 } from './src/utils/technical-analysis.ts';
 import { INSTRUMENT_SPECS } from './src/utils/trading-math.ts';
+import {
+  brokerStatus, heartbeat, createOrder, listOrders, claimNextOrder, updateOrder,
+} from './server/broker-store.ts';
 
 dotenv.config();
 
@@ -25,6 +28,21 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
+
+// Cross-origin API access for the separate Netlify frontend.
+const allowedOrigins = (process.env.FRONTEND_ORIGIN || 'https://aegis-alphatrading.netlify.app')
+  .split(',').map((origin) => origin.trim()).filter(Boolean);
+app.use((req: Request, res: Response, next) => {
+  const origin = req.headers.origin;
+  if (origin && allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Broker-Admin-Token');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  }
+  if (req.method === 'OPTIONS') return res.sendStatus(origin && allowedOrigins.includes(origin) ? 204 : 403);
+  next();
+});
 
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));
@@ -578,6 +596,104 @@ Return a valid JSON object matching the standard signal schema.
   } catch (error: any) {
     console.error('Analysis error:', error);
     res.status(500).json({ error: 'Chart analysis failed: ' + (error.message || 'Unknown error') });
+  }
+});
+
+// -------------------------------------------------------------
+// EXNESS MT5 DEMO-ONLY BROKER BRIDGE
+// -------------------------------------------------------------
+
+function timingSafeSecretEquals(actual: string, expected: string | undefined): boolean {
+  if (!expected || !actual) return false;
+  const a = Buffer.from(actual);
+  const b = Buffer.from(expected);
+  return a.length === b.length && (awaitlessTimingSafeEqual(a, b));
+}
+function awaitlessTimingSafeEqual(a: Buffer, b: Buffer): boolean {
+  // Constant-time comparison for equal-length token buffers.
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  return diff === 0;
+}
+function bearer(req: Request): string {
+  const header = req.headers.authorization || '';
+  return header.startsWith('Bearer ') ? header.slice(7) : '';
+}
+function requireEa(req: Request, res: Response): boolean {
+  if (!timingSafeSecretEquals(bearer(req), process.env.BROKER_EA_TOKEN)) {
+    res.status(401).json({ error: 'Unauthorized MT5 bridge.' }); return false;
+  }
+  return true;
+}
+function requireAdmin(req: Request, res: Response): boolean {
+  if (!timingSafeSecretEquals(String(req.headers['x-broker-admin-token'] || ''), process.env.BROKER_ADMIN_TOKEN)) {
+    res.status(401).json({ error: 'Admin token required to approve Demo orders.' }); return false;
+  }
+  return true;
+}
+
+app.get('/api/broker/status', async (_req: Request, res: Response) => {
+  try { res.json(await brokerStatus()); }
+  catch (e: any) { res.status(503).json({ enabled: false, mode: 'DEMO_ONLY', terminalConnected: false, error: e.message }); }
+});
+
+app.get('/api/broker/orders', async (req: Request, res: Response) => {
+  if (!requireAdmin(req, res)) return;
+  try { res.json({ orders: await listOrders(50) }); }
+  catch (e: any) { res.status(503).json({ error: e.message }); }
+});
+
+// The EA is allowed to report its account only after the token and Demo guards pass.
+app.post('/api/broker/mt5/heartbeat', async (req: Request, res: Response) => {
+  if (!requireEa(req, res)) return;
+  try { await heartbeat(req.body); res.json({ accepted: true, mode: 'DEMO_ONLY' }); }
+  catch (e: any) { res.status(403).json({ accepted: false, error: e.message }); }
+});
+
+app.post('/api/broker/mt5/claim', async (req: Request, res: Response) => {
+  if (!requireEa(req, res)) return;
+  try {
+    const status = await brokerStatus();
+    if (!status.terminalConnected || status.terminal?.demo !== true) {
+      return res.status(403).json({ error: 'DEMO_ONLY_GUARD: no fresh Demo terminal heartbeat.' });
+    }
+    res.json(await claimNextOrder() || {});
+  } catch (e: any) { res.status(503).json({ error: e.message }); }
+});
+
+app.post('/api/broker/mt5/orders/:id/result', async (req: Request, res: Response) => {
+  if (!requireEa(req, res)) return;
+  try {
+    const status = await brokerStatus();
+    if (!status.terminalConnected || status.terminal?.demo !== true) {
+      return res.status(403).json({ error: 'DEMO_ONLY_GUARD: terminal is not confirmed Demo.' });
+    }
+    res.json(await updateOrder(req.params.id, req.body));
+  } catch (e: any) { res.status(400).json({ error: e.message }); }
+});
+
+// Manual approval endpoint. It only accepts fresh, live-verified BUY/SELL plans for XAUUSD.
+app.post('/api/broker/orders/approve', async (req: Request, res: Response) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const { signalId, symbol, decision, tradePlan, isLiveVerified, isStale, signalTimestamp, volume } = req.body || {};
+    if (process.env.BROKER_DEMO_ENABLED !== 'true') return res.status(403).json({ error: 'Demo routing is disabled on the server.' });
+    if (decision !== 'BUY' && decision !== 'SELL') return res.status(400).json({ error: 'WAIT or unknown signal cannot be approved.' });
+    if (isLiveVerified !== true || isStale === true) return res.status(400).json({ error: 'Only fresh, live-verified market signals can be routed. Screenshot-only signals are not eligible.' });
+    const timestamp = Date.parse(signalTimestamp);
+    if (!Number.isFinite(timestamp) || Date.now() - timestamp > 120000 || timestamp > Date.now() + 5000) return res.status(400).json({ error: 'Signal is stale or timestamp is invalid. Run a fresh analysis.' });
+    if (!tradePlan || !tradePlan.entryZone || tradePlan.stopLoss == null || tradePlan.takeProfit1 == null) return res.status(400).json({ error: 'Missing trade plan.' });
+    if (!/^XAUUSD(?:m|\.)?$/i.test(String(symbol || '').replace(/[\s/_-]/g, ''))) return res.status(400).json({ error: 'Demo MVP currently supports XAUUSD only. Check exact MT5 symbol suffix.' });
+    const entry = Number(tradePlan.entryZone.optimal), sl = Number(tradePlan.stopLoss), tp = Number(tradePlan.takeProfit1);
+    const vol = Number(volume ?? 0.01);
+    if (![entry, sl, tp, vol].every(Number.isFinite) || entry <= 0 || sl <= 0 || tp <= 0) return res.status(400).json({ error: 'Entry, SL and TP must be valid positive numbers.' });
+    if (vol < 0.01 || vol > 0.03 || Math.round(vol * 1000) !== vol * 1000) return res.status(400).json({ error: 'Volume must be between 0.01 and 0.03 lots for Demo testing.' });
+    if ((decision === 'BUY' && !(sl < entry && tp > entry)) || (decision === 'SELL' && !(sl > entry && tp < entry))) return res.status(400).json({ error: 'SL/TP direction is invalid for this trade side.' });
+    const order = await createOrder({ signalId: String(signalId || ''), symbol: String(symbol).replace(/[\s/_-]/g, ''), side: decision, volume: vol, entryPrice: entry, stopLoss: sl, takeProfit: tp });
+    res.status(201).json({ order, notice: 'Queued for MT5 Demo only. Order expires in 90 seconds.' });
+  } catch (e: any) {
+    const status = /disabled|not connected|Demo terminal/i.test(e.message) ? 409 : 503;
+    res.status(status).json({ error: e.message });
   }
 });
 

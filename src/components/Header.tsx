@@ -22,7 +22,7 @@ import {
 } from 'lucide-react';
 import { TwelveDataStatus, ConnectionDiagnosticResult } from '../types/trading.ts';
 
-export type NavTab = 'analyzer' | 'chart' | 'backtest' | 'journal' | 'calculator';
+export type NavTab = 'analyzer' | 'chart' | 'backtest' | 'journal' | 'calculator' | 'broker';
 
 interface HeaderProps {
   activeTab: NavTab;
@@ -167,6 +167,18 @@ export const Header: React.FC<HeaderProps> = ({
                     {journalCount}
                   </span>
                 )}
+              </button>
+
+              <button
+                onClick={() => setActiveTab('broker')}
+                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-all ${
+                  activeTab === 'broker'
+                    ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30 shadow-sm'
+                    : 'text-slate-300 hover:text-white hover:bg-slate-800/50'
+                }`}
+              >
+                <Server className="w-4 h-4" />
+                <span className="hidden md:inline">Broker</span>
               </button>
 
               <button
