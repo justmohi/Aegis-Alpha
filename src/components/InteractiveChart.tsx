@@ -55,6 +55,7 @@ export const InteractiveChart: React.FC<InteractiveChartProps> = ({
   const [provider, setProvider] = useState<string>('Twelve Data Financial Feed');
   const [isStale, setIsStale] = useState<boolean>(false);
   const [staleReason, setStaleReason] = useState<string | null>(null);
+  const [feedError, setFeedError] = useState<string | null>(null);
   const [isCached, setIsCached] = useState<boolean>(false);
   const [autoRefresh, setAutoRefresh] = useState<boolean>(true);
 
@@ -78,6 +79,7 @@ export const InteractiveChart: React.FC<InteractiveChartProps> = ({
       const res = await fetch(`/api/market-data?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}`);
       const data = await res.json();
       if (res.ok && data.success && Array.isArray(data.candles) && data.candles.length > 0) {
+        setFeedError(null);
         setCandles(data.candles);
         setLastUpdate(data.candles[data.candles.length - 1]?.time || data.lastUpdate || '');
         setProvider(data.provider || 'Twelve Data Financial Feed');
@@ -85,13 +87,16 @@ export const InteractiveChart: React.FC<InteractiveChartProps> = ({
         setStaleReason(data.staleReason || null);
         setIsCached(Boolean(data.cached));
       } else {
+        const message = data.error || 'No verified market candles were returned.';
+        setFeedError(message);
         setCandles([]);
         setLastUpdate('');
         setIsStale(false);
-        setStaleReason(data.error || 'No verified market candles were returned.');
+        setStaleReason(message);
       }
     } catch (e) {
       console.error('Failed to load market data', e);
+      setFeedError('Unable to connect to the market-data service. Please retry.');
     } finally {
       setIsLoading(false);
     }
