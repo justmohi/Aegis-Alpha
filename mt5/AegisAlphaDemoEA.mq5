@@ -66,7 +66,7 @@ void ProcessNextOrder() {
    double sl=StringToDouble(JsonValue(response,"stopLoss"));
    double tp=StringToDouble(JsonValue(response,"takeProfit"));
    if((symbol!="XAUUSD" && symbol!=InpTradeSymbol) || volume<=0 || volume>InpMaxVolume || sl<=0 || tp<=0 || (side!="BUY" && side!="SELL")) {
-      string msg=StringFormat("{\"status\":\"REJECTED\",\"message\":\"EA validation failed: symbol/volume/SL/TP/side\",\"ticket\":null,\"executionPrice\":null}");
+      string msg="{\"status\":\"REJECTED\",\"message\":\"EA validation failed: symbol/volume/SL/TP/side\",\"ticket\":null,\"executionPrice\":null}";
       Request("POST","/api/broker/mt5/orders/"+id+"/result",msg,response,code); return;
    }
    string tradeSymbol=InpTradeSymbol;
