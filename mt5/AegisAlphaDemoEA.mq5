@@ -16,7 +16,7 @@ bool DemoGuard() {
       Print("AEGIS BLOCKED: account is not Demo. No trading requests will be sent.");
       return false;
    }
-   if(StringFind(AccountInfoString(ACCOUNT_SERVER),"demo") < 0 && StringFind(AccountInfoString(ACCOUNT_SERVER),"Demo") < 0) {
+   if(StringFind(AccountInfoString(ACCOUNT_SERVER),"demo") < 0 && StringFind(AccountInfoString(ACCOUNT_SERVER),"Demo") < 0 && StringFind(AccountInfoString(ACCOUNT_SERVER),"Trial") < 0 && StringFind(AccountInfoString(ACCOUNT_SERVER),"trial") < 0) {
       Print("AEGIS BLOCKED: server name does not identify a demo server.");
       return false;
    }
