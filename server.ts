@@ -530,10 +530,12 @@ STRICT ANALYSIS DIRECTIVES:
 Return a valid JSON object matching the standard signal schema.
 `;
 
+    let aiFailureMessage = 'The Gemini provider request failed. Check server logs and retry.';
+
     if (ai) {
       try {
         const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('AI Vision request timed out after 12s')), 12000)
+          setTimeout(() => reject(new Error('AI Vision request timed out after 45000ms')), 45000)
         );
 
         const geminiCall = ai.models.generateContent({
@@ -552,14 +554,22 @@ Return a valid JSON object matching the standard signal schema.
           return res.json(parsed);
         }
       } catch (genAiError: any) {
-        console.error('Gemini API call failed, generating deterministic institutional backup plan:', genAiError);
+        console.error('Gemini chart analysis failed:', {
+          name: genAiError?.name,
+          message: genAiError?.message,
+          status: genAiError?.status,
+          code: genAiError?.code,
+        });
+        aiFailureMessage = genAiError?.message === 'AI Vision request timed out after 45000ms'
+          ? 'Gemini chart analysis timed out after 45 seconds. Try a smaller screenshot or retry.'
+          : 'Gemini chart analysis failed. Check Render logs for the provider error and verify API access, quota, and model availability.';
       }
     }
 
     // Never fabricate screenshot analysis or return a synthetic BUY when AI is unavailable.
     return res.status(ai ? 502 : 503).json({
       error: ai
-        ? 'Chart analysis failed because the AI provider request failed. Check server diagnostics and retry.'
+        ? aiFailureMessage
         : 'Screenshot analysis requires GEMINI_API_KEY in server-side secrets. No synthetic signal was generated.',
       decision: 'WAIT',
       provider: 'Gemini (unavailable)',
