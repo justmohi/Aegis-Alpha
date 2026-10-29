@@ -401,14 +401,20 @@ Return JSON in this format:
 }
 `;
 
-        const response = await ai.models.generateContent({
-          model: 'gemini-3.8-flash',
-          contents: prompt,
-          config: {
-            responseMimeType: 'application/json',
-            temperature: 0.2,
-          },
-        });
+        // Do not let optional AI narrative synthesis stall the deterministic analysis response.
+        const response = await Promise.race([
+          ai.models.generateContent({
+            model: 'gemini-3.8-flash',
+            contents: prompt,
+            config: {
+              responseMimeType: 'application/json',
+              temperature: 0.2,
+            },
+          }),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Gemini rationale timed out after 15 seconds')), 15000)
+          ),
+        ]);
 
         const parsed = JSON.parse(response.text?.trim() || '{}');
         if (parsed.decisionRationale && Array.isArray(parsed.decisionRationale)) {
