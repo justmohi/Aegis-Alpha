@@ -69,7 +69,13 @@ void ProcessNextOrder() {
       string msg=StringFormat("{\"status\":\"REJECTED\",\"message\":\"EA validation failed: symbol/volume/SL/TP/side\",\"ticket\":null,\"executionPrice\":null}");
       Request("POST","/api/broker/mt5/orders/"+id+"/result",msg,response,code); return;
    }
-   string tradeSymbol=InpTradeSymbol;\n   if(!SymbolSelect(tradeSymbol,true)) {\n      string msg="{\\"status\\":\\"REJECTED\\",\\"message\\":\\"Configured MT5 symbol is unavailable in Market Watch\\",\\"ticket\\":null,\\"executionPrice\\":null}";\n      Request("POST","/api/broker/mt5/orders/"+id+"/result",msg,response,code); return;\n   }\n   double ask=SymbolInfoDouble(tradeSymbol,SYMBOL_ASK), bid=SymbolInfoDouble(tradeSymbol,SYMBOL_BID);
+   string tradeSymbol=InpTradeSymbol;
+   if(!SymbolSelect(tradeSymbol,true)) {
+      string msg="{\"status\":\"REJECTED\",\"message\":\"Configured MT5 symbol is unavailable in Market Watch\",\"ticket\":null,\"executionPrice\":null}";
+      Request("POST","/api/broker/mt5/orders/"+id+"/result",msg,response,code);
+      return;
+   }
+   double ask=SymbolInfoDouble(tradeSymbol,SYMBOL_ASK), bid=SymbolInfoDouble(tradeSymbol,SYMBOL_BID);
    if(ask<=0 || bid<=0 || (side=="BUY" && (sl>=ask || tp<=ask)) || (side=="SELL" && (sl<=bid || tp>=bid))) {
       string msg="{\"status\":\"REJECTED\",\"message\":\"Invalid live quote or SL/TP direction\",\"ticket\":null,\"executionPrice\":null}";
       Request("POST","/api/broker/mt5/orders/"+id+"/result",msg,response,code); return;
