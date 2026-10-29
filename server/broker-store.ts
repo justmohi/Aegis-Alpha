@@ -1,10 +1,9 @@
-import pg from 'pg';
-
-const { Pool } = pg;
-let pool: pg.Pool | null = null;
+import { Pool } from 'pg';
+import { randomUUID } from 'node:crypto';
+let pool: Pool | null = null;
 let schemaReady: Promise<void> | null = null;
 
-function getPool(): pg.Pool {
+function getPool(): Pool {
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is not configured; broker routing is disabled.');
   if (!pool) {
     pool = new Pool({
@@ -85,7 +84,7 @@ export async function brokerStatus() {
 export async function heartbeat(payload: any) {
   await ensureSchema();
   if (payload?.demo !== true) throw new Error('DEMO_ONLY_GUARD: MT5 terminal must be a Demo account.');
-  if (!/demo/i.test(String(payload?.server || ''))) throw new Error('DEMO_ONLY_GUARD: MT5 server name must identify a demo server.');
+  if (!/(demo|trial)/i.test(String(payload?.server || ''))) throw new Error('DEMO_ONLY_GUARD: MT5 server name must identify a demo server.');
   const safe = {
     demo: true, server: String(payload.server).slice(0, 120),
     login: String(payload.login || '').slice(0, 40),
@@ -106,7 +105,7 @@ export async function createOrder(input: any): Promise<BrokerOrder> {
   const status = await brokerStatus();
   if (process.env.BROKER_DEMO_ENABLED !== 'true') throw new Error('Broker routing is disabled. Set BROKER_DEMO_ENABLED=true to enable Demo-only routing.');
   if (!status.terminalConnected) throw new Error('MT5 Demo terminal is not connected or its heartbeat is stale.');
-  const id = crypto.randomUUID();
+  const id = randomUUID();
   const expiresAt = new Date(Date.now() + 90000);
   const payload = { source: 'Aegis Alpha manual approval', mode: 'DEMO_ONLY' };
   const result = await getPool().query(`
