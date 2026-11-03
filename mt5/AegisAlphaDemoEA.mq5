@@ -202,29 +202,52 @@ bool ConsecutiveLossCooldownActive(datetime &untilTime) {
    return false;
 }
 
-bool ReconcileClaimedOrders() {
-   if(!DemoGuard() || !TerminalInfoInteger(TERMINAL_CONNECTED)) return false;
-   string response; int code;
-   if(!Request("GET","/api/broker/mt5/reconcile","",response,code)) return false;
-   string id=JsonValue(response,"id");
+// Extract one complete JSON object from an array payload. Handles braces inside quoted strings.
+bool NextJsonObject(string json,int &position,string &object) {
+   int length=StringLen(json);
+   while(position<length && StringGetCharacter(json,position)!='{') position++;
+   if(position>=length) return false;
+   int start=position, depth=0;
+   bool inString=false, escaped=false;
+   for(int i=position;i<length;i++) {
+      ushort ch=StringGetCharacter(json,i);
+      if(inString) {
+         if(escaped) escaped=false;
+         else if(ch=='\\') escaped=true;
+         else if(ch=='"') inString=false;
+         continue;
+      }
+      if(ch=='"') inString=true;
+      else if(ch=='{') depth++;
+      else if(ch=='}') {
+         depth--;
+         if(depth==0) {
+            object=StringSubstr(json,start,i-start+1);
+            position=i+1;
+            return true;
+         }
+      }
+   }
+   position=length;
+   return false;
+}
+
+bool ReconcileOneClaimedOrder(string orderJson) {
+   string id=JsonValue(orderJson,"id");
    if(id=="") return false;
-   string symbol=JsonValue(response,"symbol");
-   string side=JsonValue(response,"side");
-   double requested=StringToDouble(JsonValue(response,"volume"));
+   string symbol=JsonValue(orderJson,"symbol");
+   string side=JsonValue(orderJson,"side");
+   double requested=StringToDouble(JsonValue(orderJson,"volume"));
    string marker="AA"+StringSubstr(id,0,20);
    if(!IsGoldSymbol(symbol) || requested<=0 || requested>AEGIS_HARD_MAX_VOLUME ||
       (side!="BUY" && side!="SELL")) return false;
 
-   // Search recent MT5 deal history for the unique order marker. No match means
-   // UNKNOWN, not FAILED: leave the order CLAIMED for later/manual reconciliation.
-   if(!HistorySelect(TimeCurrent()-7*86400,TimeCurrent())) return false;
    double totalVolume=0.0, weightedPrice=0.0;
    ulong lastDeal=0;
    int total=HistoryDealsTotal();
    for(int i=0;i<total;i++) {
       ulong deal=HistoryDealGetTicket(i);
-      if(deal==0) continue;
-      if((long)HistoryDealGetInteger(deal,DEAL_MAGIC)!=26102901) continue;
+      if(deal==0 || (long)HistoryDealGetInteger(deal,DEAL_MAGIC)!=26102901) continue;
       if(HistoryDealGetString(deal,DEAL_COMMENT)!=marker) continue;
       if(HistoryDealGetString(deal,DEAL_SYMBOL)!=InpTradeSymbol) continue;
       ENUM_DEAL_ENTRY entry=(ENUM_DEAL_ENTRY)HistoryDealGetInteger(deal,DEAL_ENTRY);
@@ -239,12 +262,38 @@ bool ReconcileClaimedOrders() {
       lastDeal=deal;
    }
    if(totalVolume<=0 || lastDeal==0) return false;
+   if(totalVolume>requested+0.0005) {
+      Print("AEGIS reconciliation volume exceeds approved volume for order ",id,
+            "; keeping order for manual review.");
+      return false;
+   }
    double averagePrice=weightedPrice/totalVolume;
    string message=StringFormat("RECONCILED_FROM_MT5_HISTORY: %.3f of %.3f lots; weighted average %.8f",
                                totalVolume,requested,averagePrice);
-   string body=StringFormat("{\"status\":\"EXECUTED\",\"message\":\"%s\",\"ticket\":\"%I64u\",\"executionPrice\":%.8f,\"executionVolume\":%.3f}",
+   string body=StringFormat("{\\"status\\":\\"EXECUTED\\",\\"message\\":\\"%s\\",\\"ticket\\":\\"%I64u\\",\\"executionPrice\\":%.8f,\\"executionVolume\\":%.3f}",
                             JsonEscape(message),lastDeal,averagePrice,totalVolume);
    return ReportOrderResult(id,body);
+}
+
+bool ReconcileClaimedOrders() {
+   if(!DemoGuard() || !TerminalInfoInteger(TERMINAL_CONNECTED)) return false;
+   string response; int code;
+   if(!Request("GET","/api/broker/mt5/reconcile","",response,code)) return false;
+   if(!HistorySelect(TimeCurrent()-7*86400,TimeCurrent())) return false;
+
+   // The backend returns an orders[] array. Scan every claimed order so an older
+   // unmatched order cannot starve later orders that have matching broker deals.
+   int position=StringFind(response,"\\"orders\\"");
+   if(position<0) return false;
+   position=StringFind(response,"[",position);
+   if(position<0) return false;
+   position++;
+   bool acknowledged=false;
+   string orderJson;
+   while(NextJsonObject(response,position,orderJson)) {
+      if(ReconcileOneClaimedOrder(orderJson)) acknowledged=true;
+   }
+   return acknowledged;
 }
 
 void ProcessNextOrder() {
