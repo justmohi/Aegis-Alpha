@@ -294,6 +294,7 @@ app.post('/api/analyze-live', async (req: Request, res: Response) => {
     let isLiveFeed = false;
     let isFeedStale = false;
     let feedStaleReason: string | undefined = undefined;
+    let htfStaleReason: string | undefined = undefined;
 
     // If Twelve Data is configured, fetch actual live candles
     if (isTwelveDataConfigured()) {
@@ -322,9 +323,11 @@ app.post('/api/analyze-live', async (req: Request, res: Response) => {
         try {
           const h1Res = await getTwelveDataTimeSeries({ symbol, interval: '1h', outputsize: 30 });
           if (h1Res.success) h1Candles = h1Res.candles;
+          if (h1Res.isStale) htfStaleReason = `H1 confirmation data is stale. ${h1Res.staleReason || ''}`.trim();
 
           const h4Res = await getTwelveDataTimeSeries({ symbol, interval: '4h', outputsize: 30 });
           if (h4Res.success) h4Candles = h4Res.candles;
+          if (h4Res.isStale) htfStaleReason = [htfStaleReason, `H4 confirmation data is stale. ${h4Res.staleReason || ''}`.trim()].filter(Boolean).join(' ');
         } catch (e) {
           console.warn('HTF fetch warning:', e);
         }
@@ -342,7 +345,11 @@ app.post('/api/analyze-live', async (req: Request, res: Response) => {
     // Check H1 and H4 retrieval separately (Requirement 9)
     const h1Available = Boolean(h1Candles && h1Candles.length >= 20);
     const h4Available = Boolean(h4Candles && h4Candles.length >= 20);
-    const htfFullyVerified = includeHTF ? (h1Available && h4Available) : true;
+    const htfFullyVerified = includeHTF ? (h1Available && h4Available && !htfStaleReason) : true;
+    if (htfStaleReason) {
+      isFeedStale = true;
+      feedStaleReason = [feedStaleReason, htfStaleReason].filter(Boolean).join(' ');
+    }
     const hasSufficientCandles = primaryCandles && primaryCandles.length >= 20;
 
     // 1. Run DETERMINISTIC technical calculations (ATR, Swings, BOS/CHOCH, Liquidity Sweeps, Levels)
