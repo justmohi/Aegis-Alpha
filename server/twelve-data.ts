@@ -90,6 +90,7 @@ function validateCandles(candles: Candle[], nowMs: number): string | null {
     if (!Number.isFinite(time) || time > nowMs + 5 * 60 * 1000) return 'Candle timestamp is invalid or unexpectedly in the future.';
     if (time <= previousTime) return 'Candle timestamps are not strictly chronological.';
     if (!values.every((value) => Number.isFinite(value) && value > 0)) return 'Candle contains a non-finite or non-positive OHLC value.';
+    if (!Number.isFinite(candle.volume) || candle.volume < 0) return 'Candle contains an invalid negative or non-finite volume.';
     if (candle.high < candle.low || candle.high < Math.max(candle.open, candle.close) || candle.low > Math.min(candle.open, candle.close)) {
       return 'Candle OHLC values are internally inconsistent.';
     }
@@ -414,18 +415,24 @@ export async function getTwelveDataTimeSeries(options: {
   // Check cache
   const cached = memoryCache.get(cacheKey);
   if (cached && now - cached.timestamp < cached.ttlMs) {
-    return {
-      ...cached.data,
-      cached: true,
-      lastUpdate: new Date(cached.timestamp).toISOString(),
+    latestDiagnostics = {
+      ...latestDiagnostics, backendReachable: true, apiKeyConfigured: isTwelveDataConfigured(),
+      providerRequestStatus: '200 OK (Cache)', symbolRequested: tdSymbol, intervalRequested: tdInterval,
+      latestDataTimestamp: cached.data.candles?.[cached.data.candles.length - 1]?.time || null,
+      candleCount: cached.data.candles?.length || 0,
+      providerErrorCategory: cached.data.isStale ? 'STALE_DATA' : 'NONE',
+      providerErrorMessage: cached.data.staleReason || null, latencyMs: 0,
+      testedAt: new Date().toISOString(), provider: 'Twelve Data Financial Feed (Cached)',
     };
+    return { ...cached.data, cached: true, lastUpdate: new Date(cached.timestamp).toISOString() };
   }
 
   const apiKey = process.env.TWELVE_DATA_API_KEY;
-  if (!apiKey || apiKey === 'MY_TWELVE_DATA_API_KEY') {
-    latestDiagnostics.apiKeyConfigured = false;
-    latestDiagnostics.providerErrorCategory = 'MISSING_API_KEY';
-    latestDiagnostics.providerRequestStatus = '401 Unauthorized (No Key)';
+  if (!apiKey || apiKey.trim() === '' || apiKey === 'MY_TWELVE_DATA_API_KEY') {
+    latestDiagnostics = { ...latestDiagnostics, apiKeyConfigured: false, providerErrorCategory: 'MISSING_API_KEY',
+      providerRequestStatus: '401 Unauthorized (No Key)', symbolRequested: tdSymbol, intervalRequested: tdInterval,
+      latestDataTimestamp: null, candleCount: 0, providerErrorMessage: 'TWELVE_DATA_API_KEY is not configured on the server.',
+      testedAt: new Date().toISOString(), provider: 'Twelve Data Financial Feed (Disconnected)' };
     return {
       success: false,
       provider: 'Twelve Data (Disconnected)',
@@ -448,6 +455,12 @@ export async function getTwelveDataTimeSeries(options: {
     clearTimeout(timeoutId);
 
     if (!response.ok) {
+      const category: ProviderErrorCategory = response.status === 401 ? 'INVALID_API_KEY' : response.status === 429 ? 'RATE_LIMIT_EXCEEDED' : 'NETWORK_ERROR';
+      latestDiagnostics = { ...latestDiagnostics, backendReachable: true, apiKeyConfigured: true,
+        providerRequestStatus: `${response.status} ${response.statusText}`, symbolRequested: tdSymbol, intervalRequested: tdInterval,
+        latestDataTimestamp: null, candleCount: 0, providerErrorCategory: category,
+        providerErrorMessage: `Twelve Data API returned HTTP ${response.status}.`, latencyMs: Date.now() - now,
+        testedAt: new Date().toISOString(), provider: 'Twelve Data Financial Feed' };
       if (response.status === 429) {
         latestDiagnostics.providerErrorCategory = 'RATE_LIMIT_EXCEEDED';
         latestDiagnostics.providerRequestStatus = '429 Rate Limit';
@@ -562,7 +575,9 @@ export async function getTwelveDataTimeSeries(options: {
     // Provider OHLC timestamps generally label the candle opening time. Account for the
     // expected interval before flagging the feed stale, and include the larger intraday intervals.
     const barAgeMinutes = ageMinutes - (INTERVAL_MINUTES[tdInterval] || 15);
-    const staleThresholdMinutes = Math.max(60, (INTERVAL_MINUTES[tdInterval] || 15) * 3);
+    // Candle timestamps label bar openings; allow one bar plus a small grace period.
+    // Two intervals + 2m is deliberately strict for execution timeframes.
+    const staleThresholdMinutes = (INTERVAL_MINUTES[tdInterval] || 15) * 2 + 2;
     if (barAgeMinutes > staleThresholdMinutes) {
       isStale = true;
       staleReason = `Latest candle opened at ${latestCandle.time}; data is approximately ${Math.round(Math.max(0, barAgeMinutes))} minutes old. The market session may be closed or the feed delayed.`;
@@ -578,7 +593,7 @@ export async function getTwelveDataTimeSeries(options: {
       candleCount: candles.length,
       providerErrorCategory: isStale ? 'STALE_DATA' : 'NONE',
       providerErrorMessage: staleReason || null,
-      latencyMs: 120,
+      latencyMs: Date.now() - now,
       testedAt: new Date().toISOString(),
       provider: 'Twelve Data Financial Feed',
     };
@@ -602,9 +617,13 @@ export async function getTwelveDataTimeSeries(options: {
 
     return resultPayload;
   } catch (err: any) {
+    latestDiagnostics = { ...latestDiagnostics, backendReachable: true, apiKeyConfigured: true,
+      symbolRequested: tdSymbol, intervalRequested: tdInterval, latestDataTimestamp: null, candleCount: 0,
+      providerErrorCategory: 'NETWORK_ERROR', providerErrorMessage: err.name === 'AbortError'
+        ? 'Twelve Data request timed out after 8 seconds.' : `Network error reaching Twelve Data: ${err.message}`,
+      providerRequestStatus: err.name === 'AbortError' ? '408 Request Timeout' : '500 Fetch Error',
+      latencyMs: Date.now() - now, testedAt: new Date().toISOString(), provider: 'Twelve Data Financial Feed' };
     if (err.name === 'AbortError') {
-      latestDiagnostics.providerErrorCategory = 'NETWORK_ERROR';
-      latestDiagnostics.providerRequestStatus = '408 Request Timeout';
       return {
         success: false,
         provider: 'Twelve Data',
