@@ -77,6 +77,38 @@ interface CacheEntry<T> {
 
 const memoryCache = new Map<string, CacheEntry<any>>();
 
+// Coalesce identical provider HTTP requests made concurrently by different UI
+// components/endpoints. Each caller receives its own clone so response bodies
+// can be parsed independently. This does not change cache TTLs or API behavior.
+const inFlightProviderRequests = new Map<string, Promise<Response>>();
+
+async function fetchProviderResponse(url: string, init?: RequestInit): Promise<Response> {
+  const key = `${init?.method || 'GET'}:${url}`;
+  let pending = inFlightProviderRequests.get(key);
+
+  if (!pending) {
+    pending = fetch(url, init);
+    inFlightProviderRequests.set(key, pending);
+    const tracked = pending;
+    void tracked.finally(() => {
+      // Keep the completed response briefly so near-simultaneous callers that
+      // arrive just after the network resolves do not issue a duplicate call.
+      setTimeout(() => {
+        if (inFlightProviderRequests.get(key) === tracked) {
+          inFlightProviderRequests.delete(key);
+        }
+      }, 1000);
+    }).catch(() => {
+      if (inFlightProviderRequests.get(key) === tracked) {
+        inFlightProviderRequests.delete(key);
+      }
+    });
+  }
+
+  const response = await pending;
+  return response.clone();
+}
+
 /** Assess candle freshness using provider bar-open timestamps and interval-aware thresholds. */
 export function assessCandleFreshness(
   latestTimestamp: string,
@@ -276,7 +308,7 @@ export async function probeTwelveDataConnection(options?: {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 7000);
 
-    const res = await fetch(url, { signal: controller.signal });
+    const res = await fetchProviderResponse(url, { signal: controller.signal });
     clearTimeout(timeoutId);
     const latencyMs = Date.now() - startTime;
 
@@ -477,7 +509,7 @@ export async function getTwelveDataTimeSeries(options: {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 8000);
 
-    const response = await fetch(url, { signal: controller.signal });
+    const response = await fetchProviderResponse(url, { signal: controller.signal });
     clearTimeout(timeoutId);
 
     if (!response.ok) {
@@ -734,7 +766,7 @@ export async function getTwelveDataQuote(symbol: string): Promise<{
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 6000);
 
-    const response = await fetch(url, { signal: controller.signal });
+    const response = await fetchProviderResponse(url, { signal: controller.signal });
     clearTimeout(timeoutId);
 
     if (!response.ok) {
@@ -937,7 +969,7 @@ export async function searchTwelveDataSymbols(query: string): Promise<Array<{
 
   try {
     const url = `https://api.twelvedata.com/symbol_search?symbol=${encodeURIComponent(query)}&apikey=${apiKey}`;
-    const res = await fetch(url);
+    const res = await fetchProviderResponse(url);
     if (!res.ok) return [];
     const json = await res.json();
     return Array.isArray(json.data) ? json.data.slice(0, 10) : [];
