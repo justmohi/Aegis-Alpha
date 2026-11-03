@@ -87,7 +87,7 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   const isConnected = Boolean(marketStatus?.configured && diagnostics?.providerErrorCategory === 'NONE');
-  const isDegraded = Boolean(marketStatus?.configured && diagnostics?.providerErrorCategory !== 'NONE');
+  const isDegraded = Boolean(marketStatus?.configured && diagnostics?.providerErrorCategory !== 'NONE' && diagnostics?.providerErrorCategory !== 'NOT_TESTED');
 
   return (
     <>
@@ -227,7 +227,7 @@ export const Header: React.FC<HeaderProps> = ({
                 <Zap className="w-3.5 h-3.5" />
                 <span>Twelve Data:</span>
                 <span className="font-semibold">
-                  {isConnected ? 'Connected' : isDegraded ? 'Degraded' : 'Disconnected'}
+                  {isConnected ? 'Connected' : isDegraded ? 'Degraded' : marketStatus?.configured ? 'Awaiting Probe' : 'Disconnected'}
                 </span>
               </button>
 
@@ -346,10 +346,12 @@ export const Header: React.FC<HeaderProps> = ({
                   className={`font-bold px-2 py-0.5 rounded text-[11px] ${
                     diagnostics?.providerErrorCategory === 'NONE'
                       ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                      : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                      : diagnostics?.providerErrorCategory === 'NOT_TESTED'
+                        ? 'bg-slate-700/50 text-slate-300 border border-slate-600'
+                        : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
                   }`}
                 >
-                  {diagnostics?.providerErrorCategory || 'MISSING_API_KEY'}
+                  {diagnostics?.providerErrorCategory || 'NOT_TESTED'}
                 </span>
               </div>
             </div>
