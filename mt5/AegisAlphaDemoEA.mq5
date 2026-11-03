@@ -239,19 +239,19 @@ void ProcessNextOrder() {
    }
 
    if(!OrderSend(req,res) || (res.retcode!=TRADE_RETCODE_DONE && res.retcode!=TRADE_RETCODE_DONE_PARTIAL)) {
-      string msg=StringFormat("{\"status\":\"FAILED\",\"message\":\"OrderSend retcode %u: %s\",\"ticket\":\"%I64u\",\"executionPrice\":%.8f}",res.retcode,JsonEscape(res.comment),res.order,res.price);
+      string msg=StringFormat("{\"status\":\"FAILED\",\"message\":\"OrderSend retcode %u: %s\",\"ticket\":\"%I64u\",\"executionPrice\":%.8f,\\\"executionVolume\\\":%.3f}",res.retcode,JsonEscape(res.comment),res.order,res.price);
       ReportOrderResult(id,msg); return;
    }
    if(res.retcode==TRADE_RETCODE_DONE_PARTIAL) {
       string partialMessage=StringFormat("PARTIAL_FILL: filled %.3f of requested %.3f lots. Broker: %s",
                                          res.volume,req.volume,res.comment);
       string msg=StringFormat("{\"status\":\"EXECUTED\",\"message\":\"%s\",\"ticket\":\"%I64u\",\"executionPrice\":%.8f}",
-                              JsonEscape(partialMessage),res.deal,res.price);
+                              JsonEscape(partialMessage),res.deal,res.price,res.volume);
       Print("AEGIS partial fill for order ",id,": ",partialMessage);
       ReportOrderResult(id,msg);
       return;
    }
-   string msg=StringFormat("{\"status\":\"EXECUTED\",\"message\":\"%s\",\"ticket\":\"%I64u\",\"executionPrice\":%.8f}",JsonEscape(res.comment),res.deal,res.price);
+   string msg=StringFormat("{\"status\":\"EXECUTED\",\"message\":\"%s\",\"ticket\":\"%I64u\",\"executionPrice\":%.8f}",JsonEscape(res.comment),res.deal,res.price,res.volume);
    ReportOrderResult(id,msg);
 }
 
