@@ -201,7 +201,7 @@ void ProcessNextOrder() {
    if(!OrderCheck(req,check)) {
       int checkError=GetLastError();
       string checkMessage=StringFormat("OrderCheck rejected request (error %d, retcode %u): %s",
-                                       checkError,check.retcode,JsonEscape(check.comment));
+                                       checkError,check.retcode,check.comment);
       string msg=StringFormat("{\"status\":\"FAILED\",\"message\":\"%s\",\"ticket\":null,\"executionPrice\":null}",
                               JsonEscape(checkMessage));
       Print("AEGIS preflight blocked order ",id,": ",checkMessage);
