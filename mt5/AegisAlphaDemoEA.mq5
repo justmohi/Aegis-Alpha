@@ -200,7 +200,7 @@ bool ReconcileClaimedOrders() {
    double averagePrice=weightedPrice/totalVolume;
    string message=StringFormat("RECONCILED_FROM_MT5_HISTORY: %.3f of %.3f lots; weighted average %.8f",
                                totalVolume,requested,averagePrice);
-   string body=StringFormat("{\\"status\\":\\"EXECUTED\\",\\"message\\":\\"%s\\",\\"ticket\\":\\"%I64u\\",\\"executionPrice\\":%.8f,\\"executionVolume\\":%.3f}",
+   string body=StringFormat("{\"status\":\"EXECUTED\",\"message\":\"%s\",\"ticket\":\"%I64u\",\"executionPrice\":%.8f,\"executionVolume\":%.3f}",
                             JsonEscape(message),lastDeal,averagePrice,totalVolume);
    return ReportOrderResult(id,body);
 }
