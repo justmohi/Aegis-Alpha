@@ -193,6 +193,22 @@ void ProcessNextOrder() {
    req.comment="AegisAlpha Demo";
    req.type_time=ORDER_TIME_GTC;
    req.type_filling=fillingMode;
+
+   // Preflight the exact request with the terminal/broker before sending it.
+   // A successful check is not an execution; OrderSend remains a separate step.
+   MqlTradeCheckResult check={};
+   ResetLastError();
+   if(!OrderCheck(req,check)) {
+      int checkError=GetLastError();
+      string checkMessage=StringFormat("OrderCheck rejected request (error %d, retcode %u): %s",
+                                       checkError,check.retcode,check.comment);
+      string msg=StringFormat("{\"status\":\"FAILED\",\"message\":\"%s\",\"ticket\":null,\"executionPrice\":null}",
+                              JsonEscape(checkMessage));
+      Print("AEGIS preflight blocked order ",id,": ",checkMessage);
+      Request("POST","/api/broker/mt5/orders/"+id+"/result",msg,response,code);
+      return;
+   }
+
    if(!OrderSend(req,res) || (res.retcode!=TRADE_RETCODE_DONE && res.retcode!=TRADE_RETCODE_DONE_PARTIAL)) {
       string msg=StringFormat("{\"status\":\"FAILED\",\"message\":\"OrderSend retcode %u: %s\",\"ticket\":\"%I64u\",\"executionPrice\":%.8f}",res.retcode,JsonEscape(res.comment),res.order,res.price);
       Request("POST","/api/broker/mt5/orders/"+id+"/result",msg,response,code); return;
