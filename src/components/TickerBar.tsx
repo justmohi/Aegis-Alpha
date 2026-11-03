@@ -85,8 +85,7 @@ export const TickerBar: React.FC = () => {
     };
 
     void refreshQuotes();
-    // Two symbols are polled together; keep the cadence below the provider's free-tier credit budget.
-    const timer = window.setInterval(() => void refreshQuotes(), 60000);
+    const timer = window.setInterval(() => void refreshQuotes(), 30000);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
