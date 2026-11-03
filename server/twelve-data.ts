@@ -44,6 +44,7 @@ export interface QuoteData {
 
 export type ProviderErrorCategory =
   | 'NONE'
+  | 'NOT_TESTED'
   | 'MISSING_API_KEY'
   | 'INVALID_API_KEY'
   | 'RATE_LIMIT_EXCEEDED'
@@ -220,10 +221,15 @@ export function isTwelveDataConfigured(): boolean {
  */
 export function getConnectionDiagnostics(): ConnectionDiagnosticResult {
   const configured = isTwelveDataConfigured();
+  const awaitingFirstProbe = latestDiagnostics.providerRequestStatus === 'Awaiting Provider Request';
   return {
     ...latestDiagnostics,
     backendReachable: true,
     apiKeyConfigured: configured,
+    ...(configured && awaitingFirstProbe ? {
+      providerErrorCategory: 'NOT_TESTED' as const,
+      providerErrorMessage: null,
+    } : {}),
     testedAt: latestDiagnostics.testedAt || new Date().toISOString(),
   };
 }
