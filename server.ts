@@ -18,6 +18,7 @@ import {
 } from './src/utils/technical-analysis.ts';
 import { INSTRUMENT_SPECS } from './src/utils/trading-math.ts';
 import { assessSignalQuality } from './src/utils/signal-quality.ts';
+import { runFreeHistoricalAnalysis } from './src/utils/free-analysis.ts';
 import {
   brokerStatus, heartbeat, createOrder, listOrders, listClaimedOrders, claimNextOrder, updateOrder,
 } from './server/broker-store.ts';
@@ -266,6 +267,55 @@ app.get('/api/economic-calendar', (req: Request, res: Response) => {
     events: [],
     notice: 'Verified economic calendar feed is currently unconfigured. In accordance with platform integrity standards, scheduled macro events are not fabricated.',
   });
+});
+
+// -------------------------------------------------------------
+// SEPARATE FREE HISTORICAL ANALYSIS (NO TWELVE DATA / NO AI / NO BROKER)
+// -------------------------------------------------------------
+
+app.post('/api/free-analysis', (req: Request, res: Response) => {
+  try {
+    const { candles, symbol = 'XAUUSD', timeframe = 'M15', riskRewardTarget = 2 } = req.body || {};
+    if (!Array.isArray(candles) || candles.length < 20 || candles.length > 500) {
+      return res.status(400).json({ error: 'Provide between 20 and 500 historical OHLCV candles.' });
+    }
+    const allowedTimeframes = ['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1'];
+    const normalizedTimeframe = String(timeframe).toUpperCase();
+    if (!allowedTimeframes.includes(normalizedTimeframe)) {
+      return res.status(400).json({ error: 'Unsupported timeframe. Use M1, M5, M15, M30, H1, H4 or D1.' });
+    }
+    const normalizedSymbol = String(symbol).trim().toUpperCase();
+    if (!normalizedSymbol || normalizedSymbol.length > 24) {
+      return res.status(400).json({ error: 'A valid symbol is required.' });
+    }
+    const safeCandles = candles.map((c: any) => ({
+      time: String(c?.time ?? ''),
+      open: Number(c?.open),
+      high: Number(c?.high),
+      low: Number(c?.low),
+      close: Number(c?.close),
+      volume: c?.volume === undefined || c?.volume === null || c?.volume === '' ? 0 : Number(c.volume),
+    }));
+    if (safeCandles.some((c: any) =>
+      ![c.open, c.high, c.low, c.close, c.volume].every(Number.isFinite) ||
+      [c.open, c.high, c.low, c.close].some((v: number) => v <= 0) ||
+      c.volume < 0 ||
+      c.high < Math.max(c.open, c.close, c.low) ||
+      c.low > Math.min(c.open, c.close)
+    )) {
+      return res.status(400).json({ error: 'Invalid OHLCV candle values. Check open, high, low, close and volume.' });
+    }
+    const result = runFreeHistoricalAnalysis({
+      candles: safeCandles,
+      symbol: normalizedSymbol,
+      timeframe: normalizedTimeframe,
+      riskRewardTarget: Number.isFinite(Number(riskRewardTarget)) ? Math.min(5, Math.max(1, Number(riskRewardTarget))) : 2,
+    });
+    return res.json(result);
+  } catch (error: any) {
+    console.error('Free historical analysis failed:', error);
+    return res.status(400).json({ error: error?.message || 'Unable to analyze supplied historical candles.' });
+  }
 });
 
 // -------------------------------------------------------------

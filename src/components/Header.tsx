@@ -22,7 +22,7 @@ import {
 } from 'lucide-react';
 import { TwelveDataStatus, ConnectionDiagnosticResult } from '../types/trading.ts';
 
-export type NavTab = 'analyzer' | 'chart' | 'backtest' | 'journal' | 'calculator' | 'broker';
+export type NavTab = 'analyzer' | 'free-analysis' | 'chart' | 'backtest' | 'journal' | 'calculator' | 'broker';
 
 interface HeaderProps {
   activeTab: NavTab;
@@ -126,6 +126,18 @@ export const Header: React.FC<HeaderProps> = ({
               >
                 <Activity className="w-4 h-4" />
                 <span>Analyzer</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('free-analysis')}
+                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-all ${
+                  activeTab === 'free-analysis'
+                    ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 shadow-sm'
+                    : 'text-slate-300 hover:text-white hover:bg-slate-800/50'
+                }`}
+              >
+                <Activity className="w-4 h-4" />
+                <span>Free Analysis</span>
               </button>
 
               <button
