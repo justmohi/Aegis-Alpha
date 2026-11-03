@@ -770,10 +770,11 @@ app.post('/api/broker/mt5/orders/:id/result', async (req: Request, res: Response
 app.post('/api/broker/orders/approve', async (req: Request, res: Response) => {
   if (!requireAdmin(req, res)) return;
   try {
-    const { signalId, symbol, decision, tradePlan, isLiveVerified, isStale, signalTimestamp, volume } = req.body || {};
+    const { signalId, symbol, decision, tradePlan, isLiveVerified, isStale, signalTimestamp, volume, signalQuality } = req.body || {};
     if (process.env.BROKER_DEMO_ENABLED !== 'true') return res.status(403).json({ error: 'Demo routing is disabled on the server.' });
     if (decision !== 'BUY' && decision !== 'SELL') return res.status(400).json({ error: 'WAIT or unknown signal cannot be approved.' });
     if (isLiveVerified !== true || isStale === true) return res.status(400).json({ error: 'Only fresh, live-verified market signals can be routed. Screenshot-only signals are not eligible.' });
+    if (signalQuality?.tradeEligible !== true || !['A+', 'A'].includes(signalQuality?.grade) || Number(signalQuality?.score) < 75) return res.status(400).json({ error: 'Signal Quality Gate: only A/A+ signals with a passing quality assessment can be routed.' });
     if (typeof signalId !== 'string' || signalId.trim().length < 1 || signalId.length > 128) {
       return res.status(400).json({ error: 'A valid signal ID is required.' });
     }
