@@ -66,12 +66,17 @@ function recordGeminiFailure(error: unknown) {
     status = 'TIMEOUT';
   }
 
+  const configuredKey = process.env.GEMINI_API_KEY;
+  const safeMessage = configuredKey
+    ? message.split(configuredKey).join('[redacted]')
+    : message;
+
   geminiHealthState = {
     status,
     lastErrorAt: new Date().toISOString(),
     retryAfterSeconds,
-    // Keep provider errors useful without exposing request headers or credentials.
-    message: message.slice(0, 240),
+    // Keep provider errors useful without exposing configured credentials.
+    message: safeMessage.slice(0, 240),
   };
 }
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
