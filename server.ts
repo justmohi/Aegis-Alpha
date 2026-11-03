@@ -748,8 +748,18 @@ app.post('/api/broker/orders/approve', async (req: Request, res: Response) => {
     if (process.env.BROKER_DEMO_ENABLED !== 'true') return res.status(403).json({ error: 'Demo routing is disabled on the server.' });
     if (decision !== 'BUY' && decision !== 'SELL') return res.status(400).json({ error: 'WAIT or unknown signal cannot be approved.' });
     if (isLiveVerified !== true || isStale === true) return res.status(400).json({ error: 'Only fresh, live-verified market signals can be routed. Screenshot-only signals are not eligible.' });
+    if (typeof signalId !== 'string' || signalId.trim().length < 1 || signalId.length > 128) {
+      return res.status(400).json({ error: 'A valid signal ID is required.' });
+    }
+    if (typeof signalTimestamp !== 'string' || signalTimestamp.length > 64) {
+      return res.status(400).json({ error: 'Signal is stale or timestamp is invalid. Run a fresh analysis.' });
+    }
     const timestamp = Date.parse(signalTimestamp);
-    if (!Number.isFinite(timestamp) || Date.now() - timestamp > 120000 || timestamp > Date.now() + 5000) return res.status(400).json({ error: 'Signal is stale or timestamp is invalid. Run a fresh analysis.' });
+    const now = Date.now();
+    const signalAgeMs = now - timestamp;
+    if (!Number.isFinite(timestamp) || signalAgeMs < -5000 || signalAgeMs > 120000) {
+      return res.status(400).json({ error: 'Signal is stale or timestamp is invalid. Run a fresh analysis.' });
+    }
     if (!tradePlan || !tradePlan.entryZone || tradePlan.stopLoss == null || tradePlan.takeProfit1 == null) return res.status(400).json({ error: 'Missing trade plan.' });
     if (!/^XAUUSD(?:m|\.)?$/i.test(String(symbol || '').replace(/[\s/_-]/g, ''))) return res.status(400).json({ error: 'Demo MVP currently supports XAUUSD only. Check exact MT5 symbol suffix.' });
     const entry = Number(tradePlan.entryZone.optimal), sl = Number(tradePlan.stopLoss), tp = Number(tradePlan.takeProfit1);
