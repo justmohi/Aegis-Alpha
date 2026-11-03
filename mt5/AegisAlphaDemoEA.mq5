@@ -5,7 +5,8 @@
 input string InpBackendUrl = "https://aegis-alpha-4ttu.onrender.com";
 input string InpEaToken = ""; // Set to BROKER_EA_TOKEN on Render; do not publish the real token.
 input string InpTradeSymbol = "XAUUSD"; // Must match the broker's Market Watch symbol.
-input double InpMaxVolume = 0.03;
+input double InpMaxVolume = 0.03; // User-configurable ceiling; hard safety cap below cannot be overridden.
+const double AEGIS_HARD_MAX_VOLUME = 0.03;
 input int InpPollSeconds = 5;
 input int InpMaxDeviationPoints = 30;
 
@@ -40,7 +41,7 @@ bool ValidBrokerVolume(string symbol,double volume) {
    double maxVolume=SymbolInfoDouble(symbol,SYMBOL_VOLUME_MAX);
    double step=SymbolInfoDouble(symbol,SYMBOL_VOLUME_STEP);
    if(minVolume<=0 || maxVolume<=0 || step<=0 || volume<minVolume-1e-8 ||
-      volume>maxVolume+1e-8 || volume>InpMaxVolume+1e-8) return false;
+      volume>maxVolume+1e-8 || volume>InpMaxVolume+1e-8 || volume>AEGIS_HARD_MAX_VOLUME+1e-8) return false;
    double steps=(volume-minVolume)/step;
    return MathAbs(steps-MathRound(steps))<1e-6;
 }
@@ -152,7 +153,7 @@ void ProcessNextOrder() {
    double volume=StringToDouble(JsonValue(response,"volume"));
    double sl=StringToDouble(JsonValue(response,"stopLoss"));
    double tp=StringToDouble(JsonValue(response,"takeProfit"));
-   if(!IsGoldSymbol(symbol) || !IsGoldSymbol(InpTradeSymbol) || volume<=0 || volume>InpMaxVolume || sl<=0 || tp<=0 || (side!="BUY" && side!="SELL")) {
+   if(!IsGoldSymbol(symbol) || !IsGoldSymbol(InpTradeSymbol) || volume<=0 || volume>InpMaxVolume || volume>AEGIS_HARD_MAX_VOLUME || sl<=0 || tp<=0 || (side!="BUY" && side!="SELL")) {
       string msg="{\"status\":\"REJECTED\",\"message\":\"EA validation failed: symbol/volume/SL/TP/side\",\"ticket\":null,\"executionPrice\":null}";
       Request("POST","/api/broker/mt5/orders/"+id+"/result",msg,response,code); return;
    }
