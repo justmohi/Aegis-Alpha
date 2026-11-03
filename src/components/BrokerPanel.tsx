@@ -163,6 +163,7 @@ export const BrokerPanel: React.FC<{ signal: SignalAnalysisResult | null }> = ({
             <div className="flex flex-wrap justify-between gap-2"><span className="font-semibold text-slate-100">{order.symbol} {order.side} · {order.volume.toFixed(2)} lot</span><span className={`text-xs font-bold ${order.status === 'EXECUTED' ? 'text-emerald-300' : order.status === 'FAILED' || order.status === 'REJECTED' ? 'text-rose-300' : 'text-amber-300'}`}>{order.status}</span></div>
             <p className="mt-1 text-xs text-slate-400">Entry {order.entryPrice} · SL {order.stopLoss} · TP {order.takeProfit} {order.mt5Ticket ? `· Ticket ${order.mt5Ticket}` : ''} {order.executionPrice ? `· Fill ${order.executionPrice}` : ''}</p>
             {order.executionVolume != null && <p className="mt-1 text-xs text-emerald-300">Actual filled: {order.executionVolume.toFixed(3)} / {order.volume.toFixed(3)} lot ({Math.round((order.executionVolume / order.volume) * 100)}%)</p>}
+            {order.status === 'CLAIMED' && <p className="mt-1 text-xs text-amber-300">Reconciliation pending: checking MT5 deal history. This order will not be re-queued automatically.</p>}
             {order.message && <p className="mt-1 text-xs text-slate-400">{order.message}</p>}
             <p className="mt-1 text-[11px] text-slate-500">{new Date(order.createdAt).toLocaleString()}</p>
           </div>)}</div>
