@@ -143,7 +143,6 @@ export interface SampleChartFixture {
 
 export type ProviderErrorCategory =
   | 'NONE'
-  | 'NOT_TESTED'
   | 'MISSING_API_KEY'
   | 'INVALID_API_KEY'
   | 'RATE_LIMIT_EXCEEDED'
