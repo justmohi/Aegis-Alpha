@@ -76,6 +76,28 @@ interface CacheEntry<T> {
 
 const memoryCache = new Map<string, CacheEntry<any>>();
 
+const INTERVAL_MINUTES: Record<string, number> = {
+  '1min': 1, '5min': 5, '15min': 15, '30min': 30, '1h': 60, '4h': 240, '1day': 1440,
+};
+
+/** Reject malformed, unordered, future-dated, or internally inconsistent OHLC candles. */
+function validateCandles(candles: Candle[], nowMs: number): string | null {
+  if (!Array.isArray(candles) || candles.length < 2) return 'Provider returned fewer than two candles.';
+  let previousTime = Number.NEGATIVE_INFINITY;
+  for (const candle of candles) {
+    const time = new Date(candle.time).getTime();
+    const values = [candle.open, candle.high, candle.low, candle.close];
+    if (!Number.isFinite(time) || time > nowMs + 5 * 60 * 1000) return 'Candle timestamp is invalid or unexpectedly in the future.';
+    if (time <= previousTime) return 'Candle timestamps are not strictly chronological.';
+    if (!values.every((value) => Number.isFinite(value) && value > 0)) return 'Candle contains a non-finite or non-positive OHLC value.';
+    if (candle.high < candle.low || candle.high < Math.max(candle.open, candle.close) || candle.low > Math.min(candle.open, candle.close)) {
+      return 'Candle OHLC values are internally inconsistent.';
+    }
+    previousTime = time;
+  }
+  return null;
+}
+
 // Global latest telemetry diagnostic state
 let latestDiagnostics: ConnectionDiagnosticResult = {
   backendReachable: true,
@@ -502,6 +524,33 @@ export async function getTwelveDataTimeSeries(options: {
       volume: parseFloat(c.volume) || 0,
     }));
 
+    // Validate provider payload before allowing any technical analysis.
+    const integrityError = validateCandles(candles, Date.now());
+    if (integrityError) {
+      latestDiagnostics = {
+        ...latestDiagnostics,
+        backendReachable: true,
+        apiKeyConfigured: true,
+        providerRequestStatus: '200 OK (Invalid Candle Series)',
+        symbolRequested: tdSymbol,
+        intervalRequested: tdInterval,
+        latestDataTimestamp: candles[candles.length - 1]?.time || null,
+        candleCount: candles.length,
+        providerErrorCategory: 'INSUFFICIENT_DATA',
+        providerErrorMessage: integrityError,
+        testedAt: new Date().toISOString(),
+        provider: 'Twelve Data Financial Feed',
+      };
+      return {
+        success: false,
+        provider: 'Twelve Data',
+        lastUpdate: new Date().toISOString(),
+        error: integrityError,
+        errorCode: 502,
+        errorCategory: 'INSUFFICIENT_DATA',
+      };
+    }
+
     // Verify freshness / completeness
     const latestCandle = candles[candles.length - 1];
     const latestTime = new Date(latestCandle.time).getTime();
@@ -512,11 +561,8 @@ export async function getTwelveDataTimeSeries(options: {
 
     // Provider OHLC timestamps generally label the candle opening time. Account for the
     // expected interval before flagging the feed stale, and include the larger intraday intervals.
-    const intervalMinutes: Record<string, number> = {
-      '1min': 1, '5min': 5, '15min': 15, '30min': 30, '1h': 60, '4h': 240, '1day': 1440,
-    };
-    const barAgeMinutes = ageMinutes - (intervalMinutes[tdInterval] || 15);
-    const staleThresholdMinutes = Math.max(60, (intervalMinutes[tdInterval] || 15) * 3);
+    const barAgeMinutes = ageMinutes - (INTERVAL_MINUTES[tdInterval] || 15);
+    const staleThresholdMinutes = Math.max(60, (INTERVAL_MINUTES[tdInterval] || 15) * 3);
     if (barAgeMinutes > staleThresholdMinutes) {
       isStale = true;
       staleReason = `Latest candle opened at ${latestCandle.time}; data is approximately ${Math.round(Math.max(0, barAgeMinutes))} minutes old. The market session may be closed or the feed delayed.`;
