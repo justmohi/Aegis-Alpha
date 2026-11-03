@@ -76,6 +76,26 @@ interface CacheEntry<T> {
 
 const memoryCache = new Map<string, CacheEntry<any>>();
 
+/** Assess candle freshness using provider bar-open timestamps and interval-aware thresholds. */
+export function assessCandleFreshness(
+  latestTimestamp: string,
+  interval: string,
+  nowMs: number = Date.now(),
+): { isStale: boolean; ageMinutes: number; thresholdMinutes: number; reason?: string } {
+  const intervalMinutes = INTERVAL_MINUTES[interval] || 15;
+  const timestampMs = new Date(latestTimestamp).getTime();
+  const thresholdMinutes = intervalMinutes * 2 + 2;
+  if (!Number.isFinite(timestampMs)) {
+    return { isStale: true, ageMinutes: Number.POSITIVE_INFINITY, thresholdMinutes, reason: 'Latest candle timestamp is invalid.' };
+  }
+  const ageMinutes = Math.max(0, (nowMs - timestampMs) / 60000);
+  const isStale = ageMinutes > thresholdMinutes;
+  return {
+    isStale, ageMinutes, thresholdMinutes,
+    reason: isStale ? `Latest candle opened at ${latestTimestamp}; data is approximately ${Math.round(ageMinutes)} minutes old (limit ${thresholdMinutes} minutes).` : undefined,
+  };
+}
+
 const INTERVAL_MINUTES: Record<string, number> = {
   '1min': 1, '5min': 5, '15min': 15, '30min': 30, '1h': 60, '4h': 240, '1day': 1440,
 };
@@ -564,24 +584,11 @@ export async function getTwelveDataTimeSeries(options: {
       };
     }
 
-    // Verify freshness / completeness
+    // Verify freshness using the provider's candle-open timestamp.
     const latestCandle = candles[candles.length - 1];
-    const latestTime = new Date(latestCandle.time).getTime();
-    const ageMinutes = (now - latestTime) / (60 * 1000);
-
-    let isStale = false;
-    let staleReason: string | undefined;
-
-    // Provider OHLC timestamps generally label the candle opening time. Account for the
-    // expected interval before flagging the feed stale, and include the larger intraday intervals.
-    const barAgeMinutes = ageMinutes - (INTERVAL_MINUTES[tdInterval] || 15);
-    // Candle timestamps label bar openings; allow one bar plus a small grace period.
-    // Two intervals + 2m is deliberately strict for execution timeframes.
-    const staleThresholdMinutes = (INTERVAL_MINUTES[tdInterval] || 15) * 2 + 2;
-    if (barAgeMinutes > staleThresholdMinutes) {
-      isStale = true;
-      staleReason = `Latest candle opened at ${latestCandle.time}; data is approximately ${Math.round(Math.max(0, barAgeMinutes))} minutes old. The market session may be closed or the feed delayed.`;
-    }
+    const freshness = assessCandleFreshness(latestCandle.time, tdInterval, now);
+    const isStale = freshness.isStale;
+    const staleReason = freshness.reason;
 
     latestDiagnostics = {
       backendReachable: true,
