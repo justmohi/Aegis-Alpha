@@ -148,8 +148,13 @@ export const SignalCard: React.FC<SignalCardProps> = ({
               <span className="text-xs text-slate-500 font-mono">/100</span>
             </div>
             <div className="text-[10px] font-mono text-slate-400 mt-0.5">
-              Grade {confidenceScore >= 85 ? 'A+' : confidenceScore >= 75 ? 'A' : confidenceScore >= 60 ? 'B' : 'C'}
+              Grade {result.signalQuality?.grade ?? (confidenceScore >= 85 ? 'A+' : confidenceScore >= 75 ? 'A' : confidenceScore >= 60 ? 'B' : confidenceScore >= 45 ? 'C' : 'Unqualified')}
             </div>
+            {result.signalQuality && (
+              <div className={`text-[9px] font-mono mt-1 ${result.signalQuality.tradeEligible ? 'text-emerald-400' : 'text-amber-300'}`}>
+                {result.signalQuality.tradeEligible ? 'QUALIFIED' : 'NOT QUALIFIED'}
+              </div>
+            )}
           </div>
 
           {/* Mini Factor Progress Bars */}
@@ -187,6 +192,19 @@ export const SignalCard: React.FC<SignalCardProps> = ({
           </div>
         </div>
       </div>
+
+      {result.signalQuality && !result.signalQuality.tradeEligible && (
+        <div className="rounded-lg border border-amber-900/50 bg-amber-950/20 p-3 space-y-1">
+          <div className="text-[10px] font-bold font-mono uppercase tracking-wider text-amber-300">
+            Signal Quality Gate — {result.signalQuality.label}
+          </div>
+          <ul className="text-[10px] font-mono text-slate-300 space-y-1">
+            {result.signalQuality.blockers.map((blocker, index) => (
+              <li key={index}>• {blocker}</li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {/* Trade Plan Price Ladder (When decision is BUY or SELL) */}
       {tradePlan && decision !== 'WAIT' ? (

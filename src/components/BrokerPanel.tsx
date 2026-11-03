@@ -76,6 +76,8 @@ export const BrokerPanel: React.FC<{ signal: SignalAnalysisResult | null }> = ({
     signalFresh &&
     signal.isLiveVerified === true &&
     signal.isStale !== true &&
+    signal.signalQuality?.tradeEligible === true &&
+    (signal.signalQuality.grade === 'A+' || signal.signalQuality.grade === 'A') &&
     (signal.decision === 'BUY' || signal.decision === 'SELL') &&
     signal.tradePlan?.entryZone?.optimal &&
     signal.tradePlan?.stopLoss &&

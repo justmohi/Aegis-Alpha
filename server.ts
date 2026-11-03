@@ -17,6 +17,7 @@ import {
   DeterministicSignal,
 } from './src/utils/technical-analysis.ts';
 import { INSTRUMENT_SPECS } from './src/utils/trading-math.ts';
+import { assessSignalQuality } from './src/utils/signal-quality.ts';
 import {
   brokerStatus, heartbeat, createOrder, listOrders, listClaimedOrders, claimNextOrder, updateOrder,
 } from './server/broker-store.ts';
@@ -493,6 +494,17 @@ Return JSON in this format:
       }
     }
 
+    // Signal quality is deterministic and separate from AI narrative synthesis.
+    const signalQuality = assessSignalQuality({
+      score: deterministicSignal.confidenceScore,
+      decision: deterministicSignal.decision,
+      hasTradePlan: Boolean(deterministicSignal.tradePlan),
+      isLiveVerified: isLiveFeed,
+      isStale: isFeedStale,
+      htfRequired: includeHTF,
+      htfVerified: htfFullyVerified,
+    });
+
     // Assemble final institutional report
     const responsePayload = {
       id: `SIG-${Date.now()}`,
@@ -500,6 +512,7 @@ Return JSON in this format:
       decision: deterministicSignal.decision,
       confidenceScore: deterministicSignal.confidenceScore,
       confidenceBreakdown: deterministicSignal.confidenceBreakdown,
+      signalQuality,
       setupStatus: deterministicSignal.setupStatus,
       instrument: symbol,
       timeframe,
@@ -757,10 +770,11 @@ app.post('/api/broker/mt5/orders/:id/result', async (req: Request, res: Response
 app.post('/api/broker/orders/approve', async (req: Request, res: Response) => {
   if (!requireAdmin(req, res)) return;
   try {
-    const { signalId, symbol, decision, tradePlan, isLiveVerified, isStale, signalTimestamp, volume } = req.body || {};
+    const { signalId, symbol, decision, tradePlan, isLiveVerified, isStale, signalTimestamp, volume, signalQuality } = req.body || {};
     if (process.env.BROKER_DEMO_ENABLED !== 'true') return res.status(403).json({ error: 'Demo routing is disabled on the server.' });
     if (decision !== 'BUY' && decision !== 'SELL') return res.status(400).json({ error: 'WAIT or unknown signal cannot be approved.' });
     if (isLiveVerified !== true || isStale === true) return res.status(400).json({ error: 'Only fresh, live-verified market signals can be routed. Screenshot-only signals are not eligible.' });
+    if (signalQuality?.tradeEligible !== true || !['A+', 'A'].includes(signalQuality?.grade) || Number(signalQuality?.score) < 75) return res.status(400).json({ error: 'Signal Quality Gate: only A/A+ signals with a passing quality assessment can be routed.' });
     if (typeof signalId !== 'string' || signalId.trim().length < 1 || signalId.length > 128) {
       return res.status(400).json({ error: 'A valid signal ID is required.' });
     }
