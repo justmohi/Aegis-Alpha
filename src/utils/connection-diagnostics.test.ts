@@ -7,6 +7,7 @@ import {
   isTwelveDataConfigured,
   getConnectionDiagnostics,
   probeTwelveDataConnection,
+  assessCandleFreshness,
 } from '../../server/twelve-data.ts';
 import { generateDeterministicSignal } from './technical-analysis.ts';
 import { Candle } from './backtest-engine.ts';
@@ -70,6 +71,30 @@ describe('Twelve Data Integration & Connection Diagnostics', () => {
         process.env.TWELVE_DATA_API_KEY = originalKey;
       }
     }
+  });
+
+  test('Freshness assessment uses timeframe-aware limits and rejects invalid timestamps', () => {
+    const now = Date.parse('2026-11-03T12:00:00.000Z');
+    const withinLimit = assessCandleFreshness(new Date(now - 31 * 60 * 1000).toISOString(), '15min', now);
+    const beyondLimit = assessCandleFreshness(new Date(now - 33 * 60 * 1000).toISOString(), '15min', now);
+    const invalid = assessCandleFreshness('not-a-date', '15min', now);
+
+    assert.strictEqual(withinLimit.isStale, false);
+    assert.strictEqual(withinLimit.thresholdMinutes, 32);
+    assert.strictEqual(beyondLimit.isStale, true);
+    assert.match(beyondLimit.reason || '', /33 minutes old/);
+    assert.strictEqual(invalid.isStale, true);
+    assert.match(invalid.reason || '', /timestamp is invalid/);
+  });
+
+  test('Freshness threshold scales with timeframe', () => {
+    const now = Date.parse('2026-11-03T12:00:00.000Z');
+    const m1 = assessCandleFreshness(new Date(now - 5 * 60 * 1000).toISOString(), '1min', now);
+    const h4 = assessCandleFreshness(new Date(now - 7 * 60 * 60 * 1000).toISOString(), '4h', now);
+    assert.strictEqual(m1.isStale, true);
+    assert.strictEqual(m1.thresholdMinutes, 4);
+    assert.strictEqual(h4.isStale, false);
+    assert.strictEqual(h4.thresholdMinutes, 482);
   });
 
   test('Multi-timeframe confirmation is unverified when HTF candle history is absent', () => {
