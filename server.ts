@@ -18,7 +18,7 @@ import {
 } from './src/utils/technical-analysis.ts';
 import { INSTRUMENT_SPECS } from './src/utils/trading-math.ts';
 import {
-  brokerStatus, heartbeat, createOrder, listOrders, claimNextOrder, updateOrder,
+  brokerStatus, heartbeat, createOrder, listOrders, listClaimedOrders, claimNextOrder, updateOrder,
 } from './server/broker-store.ts';
 
 dotenv.config();
@@ -716,6 +716,19 @@ app.post('/api/broker/mt5/heartbeat', async (req: Request, res: Response) => {
   if (!requireEa(req, res)) return;
   try { await heartbeat(req.body); res.json({ accepted: true, mode: 'DEMO_ONLY' }); }
   catch (e: any) { res.status(403).json({ accepted: false, error: e.message }); }
+});
+
+// Reconciliation feed: only already-CLAIMED orders are returned. This endpoint
+// never makes an order claimable again and therefore cannot trigger a duplicate trade.
+app.get('/api/broker/mt5/reconcile', async (req: Request, res: Response) => {
+  if (!requireEa(req, res)) return;
+  try {
+    const status = await brokerStatus();
+    if (!status.terminalConnected || status.terminal?.demo !== true) {
+      return res.status(403).json({ error: 'DEMO_ONLY_GUARD: terminal is not confirmed Demo.' });
+    }
+    res.json({ orders: await listClaimedOrders(20), mode: 'DEMO_ONLY' });
+  } catch (e: any) { res.status(503).json({ error: e.message }); }
 });
 
 app.post('/api/broker/mt5/claim', async (req: Request, res: Response) => {

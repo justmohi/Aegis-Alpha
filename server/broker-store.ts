@@ -123,6 +123,15 @@ export async function createOrder(input: any): Promise<BrokerOrder> {
   return mapOrder(result.rows[0]);
 }
 
+export async function listClaimedOrders(limit = 20) {
+  await ensureSchema();
+  const result = await getPool().query(
+    "SELECT * FROM aegis_mt5_orders WHERE status='CLAIMED' ORDER BY updated_at ASC LIMIT $1",
+    [Math.min(50, Math.max(1, limit))]
+  );
+  return result.rows.map(mapOrder);
+}
+
 export async function listOrders(limit = 50) {
   await ensureSchema();
   const result = await getPool().query('SELECT * FROM aegis_mt5_orders ORDER BY created_at DESC LIMIT $1', [Math.min(100, Math.max(1, limit))]);
@@ -162,12 +171,25 @@ export async function updateOrder(id: string, result: any) {
   const message = String(result?.message || '').slice(0, 500);
   // An EXECUTED acknowledgement must carry broker evidence. Do not mark an order
   // executed from an empty/malformed EA response or silently persist a null price.
-  if (status === 'EXECUTED' && (!ticket || !/^\\d+$/.test(ticket) || !Number.isFinite(price) || price <= 0 || !Number.isFinite(executionVolume) || executionVolume <= 0)) {
+  if (status === 'EXECUTED' && (!ticket || !/^\d+$/.test(ticket) || !Number.isFinite(price) || price <= 0 || !Number.isFinite(executionVolume) || executionVolume <= 0)) {
     throw new Error('EXECUTED result requires a numeric MT5 deal ticket, positive execution price, and positive actual fill volume.');
+  }
+  const existing = await getPool().query('SELECT * FROM aegis_mt5_orders WHERE id=$1', [id]);
+  if (existing.rows[0]?.status === 'EXECUTED') {
+    const prior = mapOrder(existing.rows[0]);
+    const sameExecution = status === 'EXECUTED' &&
+      prior.mt5Ticket === ticket &&
+      prior.executionPrice != null && Math.abs(prior.executionPrice - price) < 0.000001 &&
+      prior.executionVolume != null && Math.abs(prior.executionVolume - executionVolume) < 0.0005;
+    if (sameExecution) return prior; // Safe idempotent acknowledgement retry.
+    throw new Error('Order is already EXECUTED with different broker evidence; manual review required.');
   }
   const updated = await getPool().query(`
     UPDATE aegis_mt5_orders SET status=$2, updated_at=NOW(), mt5_ticket=$3,
-      execution_price=$4, execution_volume=$5, message=$6 WHERE id=$1 AND status IN ('CLAIMED','QUEUED') AND ($2 <> 'EXECUTED' OR $5 <= volume + 0.0005) RETURNING *
+      execution_price=$4, execution_volume=$5, message=$6
+    WHERE id=$1 AND status IN ('CLAIMED','QUEUED')
+      AND ($2 <> 'EXECUTED' OR ($5 > 0 AND $5 <= volume + 0.0005))
+    RETURNING *
   `, [id, status, ticket, Number.isFinite(price) && price > 0 ? price : null, Number.isFinite(executionVolume) && executionVolume > 0 ? executionVolume : null, message]);
   if (!updated.rows[0]) throw new Error('Order not found, already finalized, or reported fill volume exceeds the approved order volume.');
   return mapOrder(updated.rows[0]);
