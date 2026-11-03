@@ -143,6 +143,23 @@ void SendHeartbeat() {
    string response; int code; Request("POST","/api/broker/mt5/heartbeat",body,response,code);
 }
 
+bool ReportOrderResult(string orderId,string body) {
+   string response;
+   int status=0;
+   bool ok=Request("POST","/api/broker/mt5/orders/"+orderId+"/result",body,response,status);
+   if(!ok) {
+      // Never auto-resend an execution result: a timeout may mean the server
+      // accepted it but the acknowledgement was lost. Keep the order for manual reconciliation.
+      Print("AEGIS RESULT ACK UNKNOWN for order ",orderId,
+            ". HTTP/status=",status,
+            ", terminalError=",GetLastError(),
+            ". Do not re-submit or re-queue automatically; reconcile with MT5 history and backend.");
+      return false;
+   }
+   Print("AEGIS result acknowledged for order ",orderId,". HTTP ",status,": ",response);
+   return true;
+}
+
 void ProcessNextOrder() {
    if(!DemoGuard() || !TerminalInfoInteger(TERMINAL_CONNECTED)) return;
    string response; int code;
@@ -155,18 +172,18 @@ void ProcessNextOrder() {
    double tp=StringToDouble(JsonValue(response,"takeProfit"));
    if(!IsGoldSymbol(symbol) || !IsGoldSymbol(InpTradeSymbol) || volume<=0 || volume>InpMaxVolume || volume>AEGIS_HARD_MAX_VOLUME || sl<=0 || tp<=0 || (side!="BUY" && side!="SELL")) {
       string msg="{\"status\":\"REJECTED\",\"message\":\"EA validation failed: symbol/volume/SL/TP/side\",\"ticket\":null,\"executionPrice\":null}";
-      Request("POST","/api/broker/mt5/orders/"+id+"/result",msg,response,code); return;
+      ReportOrderResult(id,msg); return;
    }
    string tradeSymbol=InpTradeSymbol;
    if(!SymbolSelect(tradeSymbol,true)) {
       string msg="{\"status\":\"REJECTED\",\"message\":\"Configured MT5 symbol is unavailable in Market Watch\",\"ticket\":null,\"executionPrice\":null}";
-      Request("POST","/api/broker/mt5/orders/"+id+"/result",msg,response,code);
+      ReportOrderResult(id,msg);
       return;
    }
    if(SymbolInfoInteger(tradeSymbol,SYMBOL_TRADE_MODE)==SYMBOL_TRADE_MODE_DISABLED ||
       !ValidBrokerVolume(tradeSymbol,volume)) {
       string msg="{\"status\":\"REJECTED\",\"message\":\"Broker symbol is disabled or volume violates broker min/max/step\",\"ticket\":null,\"executionPrice\":null}";
-      Request("POST","/api/broker/mt5/orders/"+id+"/result",msg,response,code); return;
+      ReportOrderResult(id,msg); return;
    }
    long tradeMode=SymbolInfoInteger(tradeSymbol,SYMBOL_TRADE_MODE);
    bool directionAllowed=(tradeMode==SYMBOL_TRADE_MODE_FULL) ||
@@ -174,7 +191,7 @@ void ProcessNextOrder() {
                          (side=="SELL" && tradeMode==SYMBOL_TRADE_MODE_SHORTONLY);
    if(!directionAllowed) {
       string msg="{\"status\":\"REJECTED\",\"message\":\"Broker symbol trade mode does not allow this order direction\",\"ticket\":null,\"executionPrice\":null}";
-      Request("POST","/api/broker/mt5/orders/"+id+"/result",msg,response,code);
+      ReportOrderResult(id,msg);
       Print("AEGIS blocked ",side," because broker symbol trade mode is ",tradeMode);
       return;
    }
@@ -190,12 +207,12 @@ void ProcessNextOrder() {
                      (side=="SELL" && (sl<=bid || tp>=bid || sl-bid<minDistance || bid-tp<minDistance));
    if(ask<=0 || bid<=0 || point<=0 || invalidStops) {
       string msg="{\"status\":\"REJECTED\",\"message\":\"Invalid quote or SL/TP direction/minimum stop distance\",\"ticket\":null,\"executionPrice\":null}";
-      Request("POST","/api/broker/mt5/orders/"+id+"/result",msg,response,code); return;
+      ReportOrderResult(id,msg); return;
    }
    ENUM_ORDER_TYPE_FILLING fillingMode;
    if(!SelectSupportedFilling(tradeSymbol,fillingMode)) {
       string msg="{\"status\":\"REJECTED\",\"message\":\"Broker execution filling mode is unsupported\",\"ticket\":null,\"executionPrice\":null}";
-      Request("POST","/api/broker/mt5/orders/"+id+"/result",msg,response,code); return;
+      ReportOrderResult(id,msg); return;
    }
    MqlTradeRequest req={}; MqlTradeResult res={};
    req.action=TRADE_ACTION_DEAL; req.symbol=tradeSymbol; req.volume=volume;
@@ -217,16 +234,16 @@ void ProcessNextOrder() {
       string msg=StringFormat("{\"status\":\"FAILED\",\"message\":\"%s\",\"ticket\":null,\"executionPrice\":null}",
                               JsonEscape(checkMessage));
       Print("AEGIS preflight blocked order ",id,": ",checkMessage);
-      Request("POST","/api/broker/mt5/orders/"+id+"/result",msg,response,code);
+      ReportOrderResult(id,msg);
       return;
    }
 
    if(!OrderSend(req,res) || (res.retcode!=TRADE_RETCODE_DONE && res.retcode!=TRADE_RETCODE_DONE_PARTIAL)) {
       string msg=StringFormat("{\"status\":\"FAILED\",\"message\":\"OrderSend retcode %u: %s\",\"ticket\":\"%I64u\",\"executionPrice\":%.8f}",res.retcode,JsonEscape(res.comment),res.order,res.price);
-      Request("POST","/api/broker/mt5/orders/"+id+"/result",msg,response,code); return;
+      ReportOrderResult(id,msg); return;
    }
    string msg=StringFormat("{\"status\":\"EXECUTED\",\"message\":\"%s\",\"ticket\":\"%I64u\",\"executionPrice\":%.8f}",JsonEscape(res.comment),res.deal,res.price);
-   Request("POST","/api/broker/mt5/orders/"+id+"/result",msg,response,code);
+   ReportOrderResult(id,msg);
 }
 
 int OnInit() {
