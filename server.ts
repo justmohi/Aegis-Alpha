@@ -18,7 +18,6 @@ import {
 } from './src/utils/technical-analysis.ts';
 import { INSTRUMENT_SPECS } from './src/utils/trading-math.ts';
 import { assessSignalQuality } from './src/utils/signal-quality.ts';
-import { runFreeHistoricalAnalysis } from './src/utils/free-analysis.ts';
 import {
   brokerStatus, heartbeat, createOrder, listOrders, listClaimedOrders, claimNextOrder, updateOrder,
 } from './server/broker-store.ts';
@@ -270,55 +269,6 @@ app.get('/api/economic-calendar', (req: Request, res: Response) => {
 });
 
 // -------------------------------------------------------------
-// SEPARATE FREE HISTORICAL ANALYSIS (NO TWELVE DATA / NO AI / NO BROKER)
-// -------------------------------------------------------------
-
-app.post('/api/free-analysis', (req: Request, res: Response) => {
-  try {
-    const { candles, symbol = 'XAUUSD', timeframe = 'M15', riskRewardTarget = 2 } = req.body || {};
-    if (!Array.isArray(candles) || candles.length < 20 || candles.length > 500) {
-      return res.status(400).json({ error: 'Provide between 20 and 500 historical OHLCV candles.' });
-    }
-    const allowedTimeframes = ['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1'];
-    const normalizedTimeframe = String(timeframe).toUpperCase();
-    if (!allowedTimeframes.includes(normalizedTimeframe)) {
-      return res.status(400).json({ error: 'Unsupported timeframe. Use M1, M5, M15, M30, H1, H4 or D1.' });
-    }
-    const normalizedSymbol = String(symbol).trim().toUpperCase();
-    if (!normalizedSymbol || normalizedSymbol.length > 24) {
-      return res.status(400).json({ error: 'A valid symbol is required.' });
-    }
-    const safeCandles = candles.map((c: any) => ({
-      time: String(c?.time ?? ''),
-      open: Number(c?.open),
-      high: Number(c?.high),
-      low: Number(c?.low),
-      close: Number(c?.close),
-      volume: c?.volume === undefined || c?.volume === null || c?.volume === '' ? 0 : Number(c.volume),
-    }));
-    if (safeCandles.some((c: any) =>
-      ![c.open, c.high, c.low, c.close, c.volume].every(Number.isFinite) ||
-      [c.open, c.high, c.low, c.close].some((v: number) => v <= 0) ||
-      c.volume < 0 ||
-      c.high < Math.max(c.open, c.close, c.low) ||
-      c.low > Math.min(c.open, c.close)
-    )) {
-      return res.status(400).json({ error: 'Invalid OHLCV candle values. Check open, high, low, close and volume.' });
-    }
-    const result = runFreeHistoricalAnalysis({
-      candles: safeCandles,
-      symbol: normalizedSymbol,
-      timeframe: normalizedTimeframe,
-      riskRewardTarget: Number.isFinite(Number(riskRewardTarget)) ? Math.min(5, Math.max(1, Number(riskRewardTarget))) : 2,
-    });
-    return res.json(result);
-  } catch (error: any) {
-    console.error('Free historical analysis failed:', error);
-    return res.status(400).json({ error: error?.message || 'Unable to analyze supplied historical candles.' });
-  }
-});
-
-// -------------------------------------------------------------
 // LIVE MARKET SIGNAL ANALYSIS (DETERMINISTIC ENGINE + AI EXPLANATION)
 // -------------------------------------------------------------
 
@@ -344,7 +294,6 @@ app.post('/api/analyze-live', async (req: Request, res: Response) => {
     let isLiveFeed = false;
     let isFeedStale = false;
     let feedStaleReason: string | undefined = undefined;
-    let htfStaleReason: string | undefined = undefined;
 
     // If Twelve Data is configured, fetch actual live candles
     if (isTwelveDataConfigured()) {
@@ -373,11 +322,9 @@ app.post('/api/analyze-live', async (req: Request, res: Response) => {
         try {
           const h1Res = await getTwelveDataTimeSeries({ symbol, interval: '1h', outputsize: 30 });
           if (h1Res.success) h1Candles = h1Res.candles;
-          if (h1Res.isStale) htfStaleReason = `H1 confirmation data is stale. ${h1Res.staleReason || ''}`.trim();
 
           const h4Res = await getTwelveDataTimeSeries({ symbol, interval: '4h', outputsize: 30 });
           if (h4Res.success) h4Candles = h4Res.candles;
-          if (h4Res.isStale) htfStaleReason = [htfStaleReason, `H4 confirmation data is stale. ${h4Res.staleReason || ''}`.trim()].filter(Boolean).join(' ');
         } catch (e) {
           console.warn('HTF fetch warning:', e);
         }
@@ -395,11 +342,7 @@ app.post('/api/analyze-live', async (req: Request, res: Response) => {
     // Check H1 and H4 retrieval separately (Requirement 9)
     const h1Available = Boolean(h1Candles && h1Candles.length >= 20);
     const h4Available = Boolean(h4Candles && h4Candles.length >= 20);
-    const htfFullyVerified = includeHTF ? (h1Available && h4Available && !htfStaleReason) : true;
-    if (htfStaleReason) {
-      isFeedStale = true;
-      feedStaleReason = [feedStaleReason, htfStaleReason].filter(Boolean).join(' ');
-    }
+    const htfFullyVerified = includeHTF ? (h1Available && h4Available) : true;
     const hasSufficientCandles = primaryCandles && primaryCandles.length >= 20;
 
     // 1. Run DETERMINISTIC technical calculations (ATR, Swings, BOS/CHOCH, Liquidity Sweeps, Levels)
