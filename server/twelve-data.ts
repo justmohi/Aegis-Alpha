@@ -661,6 +661,33 @@ export async function getTwelveDataTimeSeries(options: {
 }
 
 /**
+ * Normalize Twelve Data quote timestamps without interpreting timezone-less
+ * exchange-local datetime strings as server-local/UTC timestamps.
+ * The provider's Unix timestamp is authoritative when present.
+ */
+export function parseTwelveDataQuoteTimestamp(
+  rawTimestamp: unknown,
+  rawDatetime: unknown,
+): string | null {
+  if (rawTimestamp !== null && rawTimestamp !== undefined && String(rawTimestamp).trim() !== '') {
+    const numeric = Number(rawTimestamp);
+    if (!Number.isFinite(numeric) || numeric <= 0) return null;
+    const milliseconds = numeric < 1e12 ? numeric * 1000 : numeric;
+    const date = new Date(milliseconds);
+    return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+  }
+
+  if (typeof rawDatetime !== 'string' || !rawDatetime.trim()) return null;
+  const value = rawDatetime.trim();
+  // Only parse datetime fallback when it explicitly carries UTC or an offset.
+  // "YYYY-MM-DD HH:mm:ss" is exchange-local and ambiguous without timezone.
+  const hasExplicitTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value);
+  if (!hasExplicitTimezone) return null;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+
+/**
  * Fetches real-time quote for a given instrument from Twelve Data
  */
 export async function getTwelveDataQuote(symbol: string): Promise<{
@@ -778,8 +805,8 @@ export async function getTwelveDataQuote(symbol: string): Promise<{
     }
 
     const parsedPrice = Number.parseFloat(data.close || data.price || '');
-    const parsedTimestamp = data.datetime;
-    if (!Number.isFinite(parsedPrice) || parsedPrice <= 0 || !parsedTimestamp || Number.isNaN(new Date(parsedTimestamp).getTime())) {
+    const parsedTimestamp = parseTwelveDataQuoteTimestamp(data.timestamp, data.datetime);
+    if (!Number.isFinite(parsedPrice) || parsedPrice <= 0 || !parsedTimestamp) {
       latestDiagnostics = {
         ...latestDiagnostics,
         backendReachable: true,
@@ -789,7 +816,7 @@ export async function getTwelveDataQuote(symbol: string): Promise<{
         latestDataTimestamp: null,
         candleCount: 0,
         providerErrorCategory: 'INSUFFICIENT_DATA',
-        providerErrorMessage: 'Twelve Data returned a response without a valid positive price and provider timestamp.',
+        providerErrorMessage: 'Twelve Data quote must include a positive price and a verifiable Unix timestamp (or an ISO datetime with an explicit timezone).',
         testedAt: new Date().toISOString(),
         provider: 'Twelve Data Financial Feed',
       };
@@ -797,13 +824,13 @@ export async function getTwelveDataQuote(symbol: string): Promise<{
         success: false,
         provider: 'Twelve Data',
         lastUpdate: new Date().toISOString(),
-        error: 'Provider quote did not contain a verifiable price and timestamp.',
+        error: 'Provider quote did not contain a verifiable price and timezone-safe timestamp. Unix timestamp is preferred.',
         errorCode: 502,
         errorCategory: 'INSUFFICIENT_DATA',
       };
     }
 
-    const quoteAgeMs = Date.now() - new Date(parsedTimestamp).getTime();
+    const quoteAgeMs = Date.now() - Date.parse(parsedTimestamp);
     const quoteStaleLimitMs = 2 * 60 * 1000;
     if (quoteAgeMs < -5000 || quoteAgeMs > quoteStaleLimitMs) {
       latestDiagnostics = {
