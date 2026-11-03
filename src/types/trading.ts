@@ -55,12 +55,21 @@ export interface TradePlan {
   atrBufferPips?: number;
 }
 
-export interface SignalQualityAssessment {\n  score: number;\n  grade: 'A+' | 'A' | 'B' | 'C' | 'Unqualified';\n  label: string;\n  tradeEligible: boolean;\n  blockers: string[];\n}\n\nexport interface SignalAnalysisResult {
+export interface SignalQualityAssessment {
+  score: number;
+  grade: 'A+' | 'A' | 'B' | 'C' | 'Unqualified';
+  label: string;
+  tradeEligible: boolean;
+  blockers: string[];
+}
+
+export interface SignalAnalysisResult {
   id?: string;
   timestamp?: string;
   decision: SignalDecision;
   confidenceScore: number;
-  confidenceBreakdown: ConfidenceBreakdown;\n  signalQuality?: SignalQualityAssessment;
+  confidenceBreakdown: ConfidenceBreakdown;
+  signalQuality?: SignalQualityAssessment;
   setupStatus: SetupStatus;
   instrument: string;
   timeframe: string;
