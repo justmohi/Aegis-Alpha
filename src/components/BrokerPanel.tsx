@@ -68,6 +68,20 @@ export const BrokerPanel: React.FC<{ signal: SignalAnalysisResult | null }> = ({
     finally { setLoading(false); }
   };
 
+  const signalTimestampMs = signal?.timestamp ? Date.parse(signal.timestamp) : Number.NaN;
+  const signalAgeMs = Number.isFinite(signalTimestampMs) ? Date.now() - signalTimestampMs : Number.POSITIVE_INFINITY;
+  const signalFresh = signalAgeMs >= 0 && signalAgeMs <= 120000;
+  const signalApprovalEligible = Boolean(
+    signal &&
+    signalFresh &&
+    signal.isLiveVerified === true &&
+    signal.isStale !== true &&
+    (signal.decision === 'BUY' || signal.decision === 'SELL') &&
+    signal.tradePlan?.entryZone?.optimal &&
+    signal.tradePlan?.stopLoss &&
+    signal.tradePlan?.takeProfit1
+  );
+
   const connected = status?.terminalConnected === true && status?.terminal?.demo === true;
 
   return (
@@ -124,12 +138,19 @@ export const BrokerPanel: React.FC<{ signal: SignalAnalysisResult | null }> = ({
           <select value={volume} onChange={e => setVolume(e.target.value)} className="rounded-lg border border-slate-700 bg-[#070b14] px-3 py-2 text-sm text-slate-100">
             <option value="0.01">0.01 lot</option><option value="0.02">0.02 lot</option><option value="0.03">0.03 lot (max)</option>
           </select>
-          <button onClick={() => void approve()} disabled={loading || !signal || !adminToken} className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-bold text-slate-950 hover:bg-amber-400 disabled:opacity-40">Approve current signal for Demo</button>
+          <button onClick={() => void approve()} disabled={loading || !signalApprovalEligible || !adminToken} className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-bold text-slate-950 hover:bg-amber-400 disabled:opacity-40">Approve current signal for Demo</button>
         </div>
         {signal && <div className="rounded-lg border border-slate-800 p-3 text-sm">
           <p className="text-slate-400">Current signal: <span className="font-semibold text-slate-100">{signal.instrument} / {signal.decision}</span></p>
           <p className="text-slate-400 mt-1">Entry: <span className="text-slate-200">{signal.tradePlan?.entryZone?.optimal ?? '—'}</span> · SL: <span className="text-slate-200">{signal.tradePlan?.stopLoss ?? '—'}</span> · TP1: <span className="text-slate-200">{signal.tradePlan?.takeProfit1 ?? '—'}</span></p>
-          {!signal.isLiveVerified && <p className="mt-2 text-amber-300">This signal is not verified as live market data and will be rejected by the server.</p>}
+          <p className={`mt-2 ${signalFresh ? 'text-emerald-300' : 'text-rose-300'}`}>
+            {signalFresh
+              ? `Signal age: ${Math.floor(signalAgeMs / 1000)}s (approval window: 120s)`
+              : 'Signal is stale or timestamp is invalid. Run a fresh analysis.'}
+          </p>
+          {!signal.isLiveVerified && <p className="mt-1 text-amber-300">This signal is not verified as live market data and cannot be approved.</p>}
+          {signal.isStale === true && <p className="mt-1 text-rose-300">Market data is stale. Generate a new live analysis before approval.</p>}
+          {!signal.tradePlan && <p className="mt-1 text-amber-300">No executable trade plan is available for this signal.</p>}
         </div>}
         {message && <p className="flex items-start gap-2 text-sm text-emerald-300"><CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" />{message}</p>}
         {error && <p className="flex items-start gap-2 text-sm text-rose-300"><AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />{error}</p>}
