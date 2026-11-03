@@ -759,6 +759,25 @@ export async function getTwelveDataQuote(symbol: string): Promise<{
       };
     }
 
+    const quoteAgeMs = Date.now() - new Date(parsedTimestamp).getTime();
+    const quoteStaleLimitMs = 2 * 60 * 1000;
+    if (quoteAgeMs < -5000 || quoteAgeMs > quoteStaleLimitMs) {
+      latestDiagnostics = {
+        ...latestDiagnostics, backendReachable: true, apiKeyConfigured: true,
+        providerRequestStatus: '200 OK (Stale Quote)', symbolRequested: tdSymbol,
+        latestDataTimestamp: parsedTimestamp, candleCount: 0,
+        providerErrorCategory: 'STALE_DATA',
+        providerErrorMessage: `Quote timestamp is ${Math.round(Math.max(0, quoteAgeMs) / 1000)} seconds old; maximum allowed age is 120 seconds.`,
+        latencyMs: Date.now() - now, testedAt: new Date().toISOString(), provider: 'Twelve Data Financial Feed',
+      };
+      return {
+        success: false, provider: 'Twelve Data Financial Feed',
+        lastUpdate: new Date().toISOString(),
+        error: 'Provider quote is stale or unexpectedly future-dated. No current price was accepted.',
+        errorCode: 502, errorCategory: 'STALE_DATA',
+      };
+    }
+
     const quote: QuoteData = {
       symbol: tdSymbol,
       name: data.name || tdSymbol,
@@ -785,6 +804,7 @@ export async function getTwelveDataQuote(symbol: string): Promise<{
       candleCount: 0,
       providerErrorCategory: 'NONE',
       providerErrorMessage: null,
+      latencyMs: Date.now() - now,
       testedAt: new Date().toISOString(),
       provider: 'Twelve Data Financial Feed',
     };
