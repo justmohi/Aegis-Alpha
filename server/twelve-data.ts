@@ -671,8 +671,8 @@ export async function getTwelveDataQuote(symbol: string): Promise<{
   const now = Date.now();
 
   const cached = memoryCache.get(cacheKey);
-  if (cached && now - cached.timestamp < 15 * 1000) {
-    // 15s quote TTL
+  if (cached && now - cached.timestamp < 60 * 1000) {
+    // 60s quote TTL to reduce provider credit consumption
     return {
       success: true,
       quote: cached.data,
@@ -705,13 +705,35 @@ export async function getTwelveDataQuote(symbol: string): Promise<{
     clearTimeout(timeoutId);
 
     if (!response.ok) {
+      const category: ProviderErrorCategory =
+        response.status === 401 ? 'INVALID_API_KEY' :
+        response.status === 429 ? 'RATE_LIMIT_EXCEEDED' : 'NETWORK_ERROR';
+      latestDiagnostics = {
+        ...latestDiagnostics,
+        backendReachable: true,
+        apiKeyConfigured: true,
+        providerRequestStatus: `${response.status} ${response.statusText}`,
+        symbolRequested: tdSymbol,
+        intervalRequested: 'quote',
+        latestDataTimestamp: null,
+        candleCount: 0,
+        providerErrorCategory: category,
+        providerErrorMessage: response.status === 429
+          ? 'Twelve Data quote endpoint rate limit reached. Reduce polling and wait before probing again.'
+          : response.status === 401
+            ? 'Twelve Data rejected the configured API key.'
+            : `Twelve Data quote request failed with HTTP ${response.status}.`,
+        latencyMs: Date.now() - now,
+        testedAt: new Date().toISOString(),
+        provider: 'Twelve Data Financial Feed',
+      };
       return {
         success: false,
         provider: 'Twelve Data',
         lastUpdate: new Date().toISOString(),
         error: `Quote request returned status ${response.status}`,
         errorCode: response.status,
-        errorCategory: response.status === 401 ? 'INVALID_API_KEY' : 'NETWORK_ERROR',
+        errorCategory: category,
       };
     }
 
@@ -723,13 +745,29 @@ export async function getTwelveDataQuote(symbol: string): Promise<{
       const isRate = code === 429 || data.message?.toLowerCase().includes('limit');
       const isSym = code === 400 || data.message?.toLowerCase().includes('symbol');
 
+      const category: ProviderErrorCategory = isAuth ? 'INVALID_API_KEY' : isRate ? 'RATE_LIMIT_EXCEEDED' : isSym ? 'UNSUPPORTED_SYMBOL' : 'NETWORK_ERROR';
+      latestDiagnostics = {
+        ...latestDiagnostics,
+        backendReachable: true,
+        apiKeyConfigured: true,
+        providerRequestStatus: `${code} Provider Error`,
+        symbolRequested: tdSymbol,
+        intervalRequested: 'quote',
+        latestDataTimestamp: null,
+        candleCount: 0,
+        providerErrorCategory: category,
+        providerErrorMessage: String(data.message || 'Twelve Data quote request failed.').slice(0, 240),
+        latencyMs: Date.now() - now,
+        testedAt: new Date().toISOString(),
+        provider: 'Twelve Data Financial Feed',
+      };
       return {
         success: false,
         provider: 'Twelve Data',
         lastUpdate: new Date().toISOString(),
         error: data.message || 'Error fetching quote',
         errorCode: code,
-        errorCategory: isAuth ? 'INVALID_API_KEY' : isRate ? 'RATE_LIMIT_EXCEEDED' : isSym ? 'UNSUPPORTED_SYMBOL' : 'NETWORK_ERROR',
+        errorCategory: category,
       };
     }
 
@@ -812,7 +850,7 @@ export async function getTwelveDataQuote(symbol: string): Promise<{
     memoryCache.set(cacheKey, {
       data: quote,
       timestamp: now,
-      ttlMs: 15 * 1000,
+      ttlMs: 60 * 1000,
     });
 
     return {
@@ -822,6 +860,23 @@ export async function getTwelveDataQuote(symbol: string): Promise<{
       lastUpdate: new Date().toISOString(),
     };
   } catch (err: any) {
+    latestDiagnostics = {
+      ...latestDiagnostics,
+      backendReachable: true,
+      apiKeyConfigured: true,
+      providerRequestStatus: err?.name === 'AbortError' ? '408 Quote Timeout' : '500 Quote Network Error',
+      symbolRequested: tdSymbol,
+      intervalRequested: 'quote',
+      latestDataTimestamp: null,
+      candleCount: 0,
+      providerErrorCategory: 'NETWORK_ERROR',
+      providerErrorMessage: err?.name === 'AbortError'
+        ? 'Twelve Data quote request timed out.'
+        : 'Network error while requesting a Twelve Data quote.',
+      latencyMs: Date.now() - now,
+      testedAt: new Date().toISOString(),
+      provider: 'Twelve Data Financial Feed',
+    };
     return {
       success: false,
       provider: 'Twelve Data',
