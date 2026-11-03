@@ -12,7 +12,7 @@ type BrokerStatus = {
 type Order = {
   id: string; createdAt: string; expiresAt: string; status: string; symbol: string;
   side: string; volume: number; entryPrice: number; stopLoss: number; takeProfit: number;
-  mt5Ticket?: string | null; executionPrice?: number | null; message?: string | null;
+  mt5Ticket?: string | null; executionPrice?: number | null; executionVolume?: number | null; message?: string | null;
 };
 
 export const BrokerPanel: React.FC<{ signal: SignalAnalysisResult | null }> = ({ signal }) => {
@@ -162,6 +162,7 @@ export const BrokerPanel: React.FC<{ signal: SignalAnalysisResult | null }> = ({
           <div className="space-y-2">{orders.map(order => <div key={order.id} className="rounded-lg border border-slate-800 p-3 text-sm">
             <div className="flex flex-wrap justify-between gap-2"><span className="font-semibold text-slate-100">{order.symbol} {order.side} · {order.volume.toFixed(2)} lot</span><span className={`text-xs font-bold ${order.status === 'EXECUTED' ? 'text-emerald-300' : order.status === 'FAILED' || order.status === 'REJECTED' ? 'text-rose-300' : 'text-amber-300'}`}>{order.status}</span></div>
             <p className="mt-1 text-xs text-slate-400">Entry {order.entryPrice} · SL {order.stopLoss} · TP {order.takeProfit} {order.mt5Ticket ? `· Ticket ${order.mt5Ticket}` : ''} {order.executionPrice ? `· Fill ${order.executionPrice}` : ''}</p>
+            {order.executionVolume != null && <p className="mt-1 text-xs text-emerald-300">Actual filled: {order.executionVolume.toFixed(3)} / {order.volume.toFixed(3)} lot ({Math.round((order.executionVolume / order.volume) * 100)}%)</p>}
             {order.message && <p className="mt-1 text-xs text-slate-400">{order.message}</p>}
             <p className="mt-1 text-[11px] text-slate-500">{new Date(order.createdAt).toLocaleString()}</p>
           </div>)}</div>
