@@ -40,3 +40,12 @@ The Broker panel defaults to the current Render backend URL. If your Render URL 
 - This initial bridge does not manage open positions, modify stops, or close positions after entry.
 - Do not use on a real account. The server and EA intentionally block non-Demo accounts.
 - The CI workflow checks TypeScript lint and the frontend production build. MetaEditor compilation must be checked in desktop MT5/MetaEditor.
+
+
+## Advanced risk controls (Phase 6)
+
+- Maximum stop-loss risk: USD 3.00 per order, calculated in MT5 using `OrderCalcProfit` and the broker's contract specifications. The backend independently checks XAUUSD using 100 oz per standard lot and assumes a USD-denominated account.
+- Hard maximum volume: 0.03 lots. No martingale or automatic lot escalation.
+- Daily realized-loss stop: USD 6.00 per broker-server day, based on closed Aegis EA deals including profit, swap and commission. This is not an equity-based floating drawdown limit.
+- After 2 consecutive losing Aegis EA closing deals, block new entries for 10 minutes.
+- Verify all limits against Exness Demo account history and contract specifications before enabling routing.
