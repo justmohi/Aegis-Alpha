@@ -160,6 +160,51 @@ bool ReportOrderResult(string orderId,string body) {
    return true;
 }
 
+bool ReconcileClaimedOrders() {
+   if(!DemoGuard() || !TerminalInfoInteger(TERMINAL_CONNECTED)) return false;
+   string response; int code;
+   if(!Request("GET","/api/broker/mt5/reconcile","",response,code)) return false;
+   string id=JsonValue(response,"id");
+   if(id=="") return false;
+   string symbol=JsonValue(response,"symbol");
+   string side=JsonValue(response,"side");
+   double requested=StringToDouble(JsonValue(response,"volume"));
+   string marker="AA"+StringSubstr(id,0,20);
+   if(!IsGoldSymbol(symbol) || requested<=0 || requested>AEGIS_HARD_MAX_VOLUME ||
+      (side!="BUY" && side!="SELL")) return false;
+
+   // Search recent MT5 deal history for the unique order marker. No match means
+   // UNKNOWN, not FAILED: leave the order CLAIMED for later/manual reconciliation.
+   if(!HistorySelect(TimeCurrent()-7*86400,TimeCurrent())) return false;
+   double totalVolume=0.0, weightedPrice=0.0;
+   ulong lastDeal=0;
+   int total=HistoryDealsTotal();
+   for(int i=0;i<total;i++) {
+      ulong deal=HistoryDealGetTicket(i);
+      if(deal==0) continue;
+      if((long)HistoryDealGetInteger(deal,DEAL_MAGIC)!=26102901) continue;
+      if(HistoryDealGetString(deal,DEAL_COMMENT)!=marker) continue;
+      if(HistoryDealGetString(deal,DEAL_SYMBOL)!=InpTradeSymbol) continue;
+      ENUM_DEAL_ENTRY entry=(ENUM_DEAL_ENTRY)HistoryDealGetInteger(deal,DEAL_ENTRY);
+      if(entry!=DEAL_ENTRY_IN && entry!=DEAL_ENTRY_INOUT) continue;
+      ENUM_DEAL_TYPE type=(ENUM_DEAL_TYPE)HistoryDealGetInteger(deal,DEAL_TYPE);
+      if((side=="BUY" && type!=DEAL_TYPE_BUY) || (side=="SELL" && type!=DEAL_TYPE_SELL)) continue;
+      double v=HistoryDealGetDouble(deal,DEAL_VOLUME);
+      double p=HistoryDealGetDouble(deal,DEAL_PRICE);
+      if(v<=0 || p<=0) continue;
+      totalVolume+=v;
+      weightedPrice+=v*p;
+      lastDeal=deal;
+   }
+   if(totalVolume<=0 || lastDeal==0) return false;
+   double averagePrice=weightedPrice/totalVolume;
+   string message=StringFormat("RECONCILED_FROM_MT5_HISTORY: %.3f of %.3f lots; weighted average %.8f",
+                               totalVolume,requested,averagePrice);
+   string body=StringFormat("{\\"status\\":\\"EXECUTED\\",\\"message\\":\\"%s\\",\\"ticket\\":\\"%I64u\\",\\"executionPrice\\":%.8f,\\"executionVolume\\":%.3f}",
+                            JsonEscape(message),lastDeal,averagePrice,totalVolume);
+   return ReportOrderResult(id,body);
+}
+
 void ProcessNextOrder() {
    if(!DemoGuard() || !TerminalInfoInteger(TERMINAL_CONNECTED)) return;
    string response; int code;
@@ -219,7 +264,7 @@ void ProcessNextOrder() {
    req.type=(side=="BUY"?ORDER_TYPE_BUY:ORDER_TYPE_SELL);
    req.price=NormalizeDouble(side=="BUY"?ask:bid,digits); req.sl=sl; req.tp=tp;
    req.deviation=InpMaxDeviationPoints; req.magic=26102901;
-   req.comment="AegisAlpha Demo";
+   req.comment="AA"+StringSubstr(id,0,20);
    req.type_time=ORDER_TIME_GTC;
    req.type_filling=fillingMode;
 
@@ -264,5 +309,5 @@ int OnInit() {
    return INIT_SUCCEEDED;
 }
 void OnDeinit(const int reason) { EventKillTimer(); }
-void OnTimer() { if(DemoGuard()) { SendHeartbeat(); ProcessNextOrder(); } }
+void OnTimer() { if(DemoGuard()) { SendHeartbeat(); ReconcileClaimedOrders(); ProcessNextOrder(); } }
 void OnTick() { /* Timer-based polling keeps bridge behavior deterministic. */ }
