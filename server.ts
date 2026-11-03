@@ -27,6 +27,58 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
+
+type GeminiHealthState = {
+  status: 'UNKNOWN' | 'AVAILABLE' | 'QUOTA_EXHAUSTED' | 'AUTH_ERROR' | 'TIMEOUT' | 'DEGRADED';
+  lastErrorAt: string | null;
+  retryAfterSeconds: number | null;
+  message: string | null;
+};
+
+let geminiHealthState: GeminiHealthState = {
+  status: 'UNKNOWN',
+  lastErrorAt: null,
+  retryAfterSeconds: null,
+  message: null,
+};
+
+function recordGeminiSuccess() {
+  geminiHealthState = {
+    status: 'AVAILABLE',
+    lastErrorAt: null,
+    retryAfterSeconds: null,
+    message: null,
+  };
+}
+
+function recordGeminiFailure(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  let status: GeminiHealthState['status'] = 'DEGRADED';
+  let retryAfterSeconds: number | null = null;
+
+  if (/429|RESOURCE_EXHAUSTED|quota exceeded|rate limit/i.test(message)) {
+    status = 'QUOTA_EXHAUSTED';
+    const retryMatch = message.match(/(?:retry in |retryDelay["']?\s*:\s*["']?)(\d+)\s*s?/i);
+    retryAfterSeconds = retryMatch ? Number(retryMatch[1]) : 60;
+  } else if (/401|403|API key|PERMISSION_DENIED|unauthorized/i.test(message)) {
+    status = 'AUTH_ERROR';
+  } else if (/timeout|timed out|ETIMEDOUT/i.test(message)) {
+    status = 'TIMEOUT';
+  }
+
+  const configuredKey = process.env.GEMINI_API_KEY;
+  const safeMessage = configuredKey
+    ? message.split(configuredKey).join('[redacted]')
+    : message;
+
+  geminiHealthState = {
+    status,
+    lastErrorAt: new Date().toISOString(),
+    retryAfterSeconds,
+    // Keep provider errors useful without exposing configured credentials.
+    message: safeMessage.slice(0, 240),
+  };
+}
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 
 // Cross-origin API access for the separate Netlify frontend.
@@ -71,16 +123,24 @@ app.get('/api/health', (req: Request, res: Response) => {
   const hasGemini = Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY');
   const hasTwelveData = isTwelveDataConfigured();
   const diagnostics = getConnectionDiagnostics();
+  const aiStatus = hasGemini ? geminiHealthState.status : 'NOT_CONFIGURED';
 
   res.json({
     status: 'online',
     timestamp: new Date().toISOString(),
-    aiEngine: hasGemini ? 'Gemini 3.8 Flash (Active)' : 'Deterministic Technical Rules Engine',
+    aiEngine: hasGemini
+      ? (aiStatus === 'AVAILABLE' || aiStatus === 'UNKNOWN' ? 'Gemini 3.8 Flash' : 'Gemini unavailable; deterministic engine active')
+      : 'Deterministic Technical Rules Engine',
+    aiStatus,
+    aiLastErrorAt: geminiHealthState.lastErrorAt,
+    aiRetryAfterSeconds: geminiHealthState.retryAfterSeconds,
+    aiStatusMessage: geminiHealthState.message,
+    deterministicAnalysisAvailable: true,
     marketDataProvider: hasTwelveData
       ? `Twelve Data Financial Feed (${diagnostics.providerRequestStatus})`
       : 'Twelve Data (Awaiting API Key)',
     twelveDataConfigured: hasTwelveData,
-    version: '2.5.1-verified-market-data',
+    version: '2.5.2-gemini-health',
   });
 });
 
@@ -416,6 +476,7 @@ Return JSON in this format:
           ),
         ]);
 
+        recordGeminiSuccess();
         const parsed = JSON.parse(response.text?.trim() || '{}');
         if (parsed.decisionRationale && Array.isArray(parsed.decisionRationale)) {
           aiEnhancedRationale = parsed.decisionRationale;
@@ -427,6 +488,7 @@ Return JSON in this format:
           aiInvalidations = parsed.invalidationConditions;
         }
       } catch (genErr) {
+        recordGeminiFailure(genErr);
         console.warn('Gemini explanation synthesis fallback:', genErr);
       }
     }
