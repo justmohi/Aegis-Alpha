@@ -97,6 +97,16 @@ export const BrokerPanel: React.FC<{ signal: SignalAnalysisResult | null }> = ({
         </span>
       </div>
 
+      <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
+        <h3 className="font-semibold text-slate-100">Advanced risk controls</h3>
+        <div className="mt-2 grid gap-2 text-sm sm:grid-cols-2">
+          <p className="text-slate-300">Maximum risk per order: <strong className="text-amber-300">$3.00</strong></p>
+          <p className="text-slate-300">Maximum volume: <strong className="text-amber-300">0.03 lot</strong></p>
+          <p className="text-slate-300">Daily realized-loss stop: <strong className="text-amber-300">$6.00</strong></p>
+          <p className="text-slate-300">Cooldown: <strong className="text-amber-300">10 min after 2 consecutive losses</strong></p>
+        </div>
+        <p className="mt-2 text-xs text-slate-400">No martingale. MT5 EA enforces the broker-calculated stop risk and loss controls; backend independently checks the XAUUSD risk ceiling.</p>
+      </div>
       <div className="grid gap-3 sm:grid-cols-3">
         <div className="rounded-xl border border-slate-800 bg-[#0b1220] p-4">
           <ShieldCheck className="w-5 h-5 text-emerald-400 mb-2" />

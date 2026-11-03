@@ -779,6 +779,11 @@ app.post('/api/broker/orders/approve', async (req: Request, res: Response) => {
     const vol = Number(volume ?? 0.01);
     if (![entry, sl, tp, vol].every(Number.isFinite) || entry <= 0 || sl <= 0 || tp <= 0) return res.status(400).json({ error: 'Entry, SL and TP must be valid positive numbers.' });
     if (vol < 0.01 || vol > 0.03 || Math.round(vol * 1000) !== vol * 1000) return res.status(400).json({ error: 'Volume must be between 0.01 and 0.03 lots for Demo testing.' });
+    // Independent server-side XAUUSD monetary-risk ceiling (100 oz per standard lot).
+    const estimatedRiskUsd = Math.abs(entry - sl) * 100 * vol;
+    if (!Number.isFinite(estimatedRiskUsd) || estimatedRiskUsd > 3.0001) {
+      return res.status(400).json({ error: `Estimated stop-loss risk is ${estimatedRiskUsd.toFixed(2)}; maximum permitted risk is $3.00 per order.` });
+    }
     if ((decision === 'BUY' && !(sl < entry && tp > entry)) || (decision === 'SELL' && !(sl > entry && tp < entry))) return res.status(400).json({ error: 'SL/TP direction is invalid for this trade side.' });
     const order = await createOrder({ signalId: String(signalId || ''), symbol: String(symbol).replace(/[\s/_-]/g, ''), side: decision, volume: vol, entryPrice: entry, stopLoss: sl, takeProfit: tp });
     res.status(201).json({ order, notice: 'Queued for MT5 Demo only. Order expires in 90 seconds.' });
