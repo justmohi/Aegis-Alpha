@@ -167,8 +167,8 @@ export async function updateOrder(id: string, result: any) {
   }
   const updated = await getPool().query(`
     UPDATE aegis_mt5_orders SET status=$2, updated_at=NOW(), mt5_ticket=$3,
-      execution_price=$4, execution_volume=$5, message=$6 WHERE id=$1 AND status IN ('CLAIMED','QUEUED') RETURNING *
+      execution_price=$4, execution_volume=$5, message=$6 WHERE id=$1 AND status IN ('CLAIMED','QUEUED') AND ($2 <> 'EXECUTED' OR $5 <= volume + 0.0005) RETURNING *
   `, [id, status, ticket, Number.isFinite(price) && price > 0 ? price : null, Number.isFinite(executionVolume) && executionVolume > 0 ? executionVolume : null, message]);
-  if (!updated.rows[0]) throw new Error('Order not found or no longer awaiting execution update.');
+  if (!updated.rows[0]) throw new Error('Order not found, already finalized, or reported fill volume exceeds the approved order volume.');
   return mapOrder(updated.rows[0]);
 }
