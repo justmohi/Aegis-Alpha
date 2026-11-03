@@ -167,6 +167,17 @@ void ProcessNextOrder() {
       string msg="{\"status\":\"REJECTED\",\"message\":\"Broker symbol is disabled or volume violates broker min/max/step\",\"ticket\":null,\"executionPrice\":null}";
       Request("POST","/api/broker/mt5/orders/"+id+"/result",msg,response,code); return;
    }
+   long tradeMode=SymbolInfoInteger(tradeSymbol,SYMBOL_TRADE_MODE);
+   bool directionAllowed=(tradeMode==SYMBOL_TRADE_MODE_FULL) ||
+                         (side=="BUY" && tradeMode==SYMBOL_TRADE_MODE_LONGONLY) ||
+                         (side=="SELL" && tradeMode==SYMBOL_TRADE_MODE_SHORTONLY);
+   if(!directionAllowed) {
+      string msg="{\"status\":\"REJECTED\",\"message\":\"Broker symbol trade mode does not allow this order direction\",\"ticket\":null,\"executionPrice\":null}";
+      Request("POST","/api/broker/mt5/orders/"+id+"/result",msg,response,code);
+      Print("AEGIS blocked ",side," because broker symbol trade mode is ",tradeMode);
+      return;
+   }
+
    double ask=SymbolInfoDouble(tradeSymbol,SYMBOL_ASK), bid=SymbolInfoDouble(tradeSymbol,SYMBOL_BID);
    double point=SymbolInfoDouble(tradeSymbol,SYMBOL_POINT);
    int digits=(int)SymbolInfoInteger(tradeSymbol,SYMBOL_DIGITS);
