@@ -82,7 +82,7 @@ const memoryCache = new Map<string, CacheEntry<any>>();
 // can be parsed independently. This does not change cache TTLs or API behavior.
 const inFlightProviderRequests = new Map<string, Promise<Response>>();
 
-async function fetchProviderResponse(url: string, init?: RequestInit): Promise<Response> {
+export async function fetchProviderResponse(url: string, init?: RequestInit): Promise<Response> {
   const key = `${init?.method || 'GET'}:${url}`;
   let pending = inFlightProviderRequests.get(key);
 
