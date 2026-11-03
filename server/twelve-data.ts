@@ -681,7 +681,7 @@ export function parseTwelveDataQuoteTimestamp(
   const value = rawDatetime.trim();
   // Only parse datetime fallback when it explicitly carries UTC or an offset.
   // "YYYY-MM-DD HH:mm:ss" is exchange-local and ambiguous without timezone.
-  const hasExplicitTimezone = /(?:Z|[+-]\\d{2}:?\\d{2})$/i.test(value);
+  const hasExplicitTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value);
   if (!hasExplicitTimezone) return null;
   const date = new Date(value);
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
