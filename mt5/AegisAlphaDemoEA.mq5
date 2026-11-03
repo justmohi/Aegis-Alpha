@@ -16,11 +16,52 @@ bool DemoGuard() {
       Print("AEGIS BLOCKED: account is not Demo. No trading requests will be sent.");
       return false;
    }
-   if(StringFind(AccountInfoString(ACCOUNT_SERVER),"demo") < 0 && StringFind(AccountInfoString(ACCOUNT_SERVER),"Demo") < 0 && StringFind(AccountInfoString(ACCOUNT_SERVER),"Trial") < 0 && StringFind(AccountInfoString(ACCOUNT_SERVER),"trial") < 0) {
-      Print("AEGIS BLOCKED: server name does not identify a demo server.");
+   string server=AccountInfoString(ACCOUNT_SERVER);
+   StringToLower(server);
+   if(StringFind(server,"demo") < 0 && StringFind(server,"trial") < 0) {
+      Print("AEGIS BLOCKED: server name does not identify a demo/trial server.");
       return false;
    }
    return true;
+}
+
+bool IsGoldSymbol(string symbol) {
+   string normalized=symbol;
+   StringToUpper(normalized);
+   StringReplace(normalized," ","");
+   StringReplace(normalized,"/","");
+   StringReplace(normalized,"_","");
+   StringReplace(normalized,"-","");
+   return (normalized=="XAUUSD" || normalized=="XAUUSDm" || normalized=="XAUUSD.");
+}
+
+bool ValidBrokerVolume(string symbol,double volume) {
+   double minVolume=SymbolInfoDouble(symbol,SYMBOL_VOLUME_MIN);
+   double maxVolume=SymbolInfoDouble(symbol,SYMBOL_VOLUME_MAX);
+   double step=SymbolInfoDouble(symbol,SYMBOL_VOLUME_STEP);
+   if(minVolume<=0 || maxVolume<=0 || step<=0 || volume<minVolume-1e-8 ||
+      volume>maxVolume+1e-8 || volume>InpMaxVolume+1e-8) return false;
+   double steps=(volume-minVolume)/step;
+   return MathAbs(steps-MathRound(steps))<1e-6;
+}
+
+bool SelectSupportedFilling(string symbol,ENUM_ORDER_TYPE_FILLING &fillingMode) {
+   long flags=SymbolInfoInteger(symbol,SYMBOL_FILLING_MODE);
+   ENUM_SYMBOL_TRADE_EXECUTION execution=(ENUM_SYMBOL_TRADE_EXECUTION)SymbolInfoInteger(symbol,SYMBOL_TRADE_EXEMODE);
+   if((flags & SYMBOL_FILLING_IOC)==SYMBOL_FILLING_IOC) {
+      fillingMode=ORDER_FILLING_IOC;
+      return true;
+   }
+   if((flags & SYMBOL_FILLING_FOK)==SYMBOL_FILLING_FOK) {
+      fillingMode=ORDER_FILLING_FOK;
+      return true;
+   }
+   if(execution!=SYMBOL_TRADE_EXECUTION_MARKET) {
+      fillingMode=ORDER_FILLING_RETURN;
+      return true;
+   }
+   Print("AEGIS BLOCKED: broker exposes no supported filling mode for Market Execution.");
+   return false;
 }
 
 string JsonValue(string json, string key) {
@@ -65,7 +106,7 @@ void ProcessNextOrder() {
    double volume=StringToDouble(JsonValue(response,"volume"));
    double sl=StringToDouble(JsonValue(response,"stopLoss"));
    double tp=StringToDouble(JsonValue(response,"takeProfit"));
-   if((symbol!="XAUUSD" && symbol!=InpTradeSymbol) || volume<=0 || volume>InpMaxVolume || sl<=0 || tp<=0 || (side!="BUY" && side!="SELL")) {
+   if(!IsGoldSymbol(symbol) || !IsGoldSymbol(InpTradeSymbol) || volume<=0 || volume>InpMaxVolume || sl<=0 || tp<=0 || (side!="BUY" && side!="SELL")) {
       string msg="{\"status\":\"REJECTED\",\"message\":\"EA validation failed: symbol/volume/SL/TP/side\",\"ticket\":null,\"executionPrice\":null}";
       Request("POST","/api/broker/mt5/orders/"+id+"/result",msg,response,code); return;
    }
@@ -75,22 +116,37 @@ void ProcessNextOrder() {
       Request("POST","/api/broker/mt5/orders/"+id+"/result",msg,response,code);
       return;
    }
+   if(SymbolInfoInteger(tradeSymbol,SYMBOL_TRADE_MODE)==SYMBOL_TRADE_MODE_DISABLED ||
+      !ValidBrokerVolume(tradeSymbol,volume)) {
+      string msg="{\\"status\\":\\"REJECTED\\",\\"message\\":\\"Broker symbol is disabled or volume violates broker min/max/step\\",\\"ticket\\":null,\\"executionPrice\\":null}";
+      Request("POST","/api/broker/mt5/orders/"+id+"/result",msg,response,code); return;
+   }
    double ask=SymbolInfoDouble(tradeSymbol,SYMBOL_ASK), bid=SymbolInfoDouble(tradeSymbol,SYMBOL_BID);
-   if(ask<=0 || bid<=0 || (side=="BUY" && (sl>=ask || tp<=ask)) || (side=="SELL" && (sl<=bid || tp>=bid))) {
-      string msg="{\"status\":\"REJECTED\",\"message\":\"Invalid live quote or SL/TP direction\",\"ticket\":null,\"executionPrice\":null}";
+   double point=SymbolInfoDouble(tradeSymbol,SYMBOL_POINT);
+   int digits=(int)SymbolInfoInteger(tradeSymbol,SYMBOL_DIGITS);
+   int stopsLevel=(int)SymbolInfoInteger(tradeSymbol,SYMBOL_TRADE_STOPS_LEVEL);
+   double minDistance=stopsLevel*point;
+   sl=NormalizeDouble(sl,digits);
+   tp=NormalizeDouble(tp,digits);
+   bool invalidStops=(side=="BUY" && (sl>=ask || tp<=ask || ask-sl<minDistance || tp-ask<minDistance)) ||
+                     (side=="SELL" && (sl<=bid || tp>=bid || sl-bid<minDistance || bid-tp<minDistance));
+   if(ask<=0 || bid<=0 || point<=0 || invalidStops) {
+      string msg="{\\"status\\":\\"REJECTED\\",\\"message\\":\\"Invalid quote or SL/TP direction/minimum stop distance\\",\\"ticket\\":null,\\"executionPrice\\":null}";
+      Request("POST","/api/broker/mt5/orders/"+id+"/result",msg,response,code); return;
+   }
+   ENUM_ORDER_TYPE_FILLING fillingMode;
+   if(!SelectSupportedFilling(tradeSymbol,fillingMode)) {
+      string msg="{\\"status\\":\\"REJECTED\\",\\"message\\":\\"Broker execution filling mode is unsupported\\",\\"ticket\\":null,\\"executionPrice\\":null}";
       Request("POST","/api/broker/mt5/orders/"+id+"/result",msg,response,code); return;
    }
    MqlTradeRequest req={}; MqlTradeResult res={};
    req.action=TRADE_ACTION_DEAL; req.symbol=tradeSymbol; req.volume=volume;
    req.type=(side=="BUY"?ORDER_TYPE_BUY:ORDER_TYPE_SELL);
-   req.price=(side=="BUY"?ask:bid); req.sl=sl; req.tp=tp;
+   req.price=NormalizeDouble(side=="BUY"?ask:bid,digits); req.sl=sl; req.tp=tp;
    req.deviation=InpMaxDeviationPoints; req.magic=26102901;
    req.comment="AegisAlpha Demo";
    req.type_time=ORDER_TIME_GTC;
-   long filling=SymbolInfoInteger(tradeSymbol,SYMBOL_FILLING_MODE);
-   if((filling & SYMBOL_FILLING_FOK)==SYMBOL_FILLING_FOK) req.type_filling=ORDER_FILLING_FOK;
-   else if((filling & SYMBOL_FILLING_IOC)==SYMBOL_FILLING_IOC) req.type_filling=ORDER_FILLING_IOC;
-   else req.type_filling=ORDER_FILLING_RETURN;
+   req.type_filling=fillingMode;
    if(!OrderSend(req,res) || (res.retcode!=TRADE_RETCODE_DONE && res.retcode!=TRADE_RETCODE_DONE_PARTIAL)) {
       string msg=StringFormat("{\"status\":\"FAILED\",\"message\":\"OrderSend retcode %u: %s\",\"ticket\":\"%I64u\",\"executionPrice\":%.8f}",res.retcode,res.comment,res.order,res.price);
       Request("POST","/api/broker/mt5/orders/"+id+"/result",msg,response,code); return;
