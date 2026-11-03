@@ -7,6 +7,10 @@ input string InpEaToken = ""; // Set to BROKER_EA_TOKEN on Render; do not publis
 input string InpTradeSymbol = "XAUUSD"; // Must match the broker's Market Watch symbol.
 input double InpMaxVolume = 0.03; // User-configurable ceiling; hard safety cap below cannot be overridden.
 const double AEGIS_HARD_MAX_VOLUME = 0.03;
+input double InpMaxRiskUSD = 3.00;
+input double InpMaxDailyRealizedLossUSD = 6.00;
+input int InpMaxConsecutiveLosses = 2;
+input int InpCooldownMinutes = 10;
 input int InpPollSeconds = 5;
 input int InpMaxDeviationPoints = 30;
 
@@ -160,6 +164,44 @@ bool ReportOrderResult(string orderId,string body) {
    return true;
 }
 
+double TodayRealizedPnl() {
+   MqlDateTime parts; TimeToStruct(TimeCurrent(),parts);
+   parts.hour=0; parts.min=0; parts.sec=0;
+   if(!HistorySelect(StructToTime(parts),TimeCurrent())) return 0.0;
+   double pnl=0.0;
+   for(int i=0;i<HistoryDealsTotal();i++) {
+      ulong deal=HistoryDealGetTicket(i);
+      if(deal==0 || (long)HistoryDealGetInteger(deal,DEAL_MAGIC)!=26102901) continue;
+      ENUM_DEAL_ENTRY entry=(ENUM_DEAL_ENTRY)HistoryDealGetInteger(deal,DEAL_ENTRY);
+      if(entry!=DEAL_ENTRY_OUT && entry!=DEAL_ENTRY_OUT_BY && entry!=DEAL_ENTRY_INOUT) continue;
+      pnl+=HistoryDealGetDouble(deal,DEAL_PROFIT)+HistoryDealGetDouble(deal,DEAL_SWAP)+HistoryDealGetDouble(deal,DEAL_COMMISSION);
+   }
+   return pnl;
+}
+
+bool ConsecutiveLossCooldownActive(datetime &untilTime) {
+   untilTime=0;
+   if(InpMaxConsecutiveLosses<1 || InpCooldownMinutes<1 || !HistorySelect(TimeCurrent()-30*86400,TimeCurrent())) return false;
+   int losses=0; datetime latestLoss=0;
+   for(int i=HistoryDealsTotal()-1;i>=0;i--) {
+      ulong deal=HistoryDealGetTicket(i);
+      if(deal==0 || (long)HistoryDealGetInteger(deal,DEAL_MAGIC)!=26102901) continue;
+      ENUM_DEAL_ENTRY entry=(ENUM_DEAL_ENTRY)HistoryDealGetInteger(deal,DEAL_ENTRY);
+      if(entry!=DEAL_ENTRY_OUT && entry!=DEAL_ENTRY_OUT_BY && entry!=DEAL_ENTRY_INOUT) continue;
+      double pnl=HistoryDealGetDouble(deal,DEAL_PROFIT)+HistoryDealGetDouble(deal,DEAL_SWAP)+HistoryDealGetDouble(deal,DEAL_COMMISSION);
+      if(pnl < -0.000001) {
+         losses++;
+         if(latestLoss==0) latestLoss=(datetime)HistoryDealGetInteger(deal,DEAL_TIME);
+         if(losses>=InpMaxConsecutiveLosses) break;
+      } else if(pnl > 0.000001) break;
+   }
+   if(losses>=InpMaxConsecutiveLosses && latestLoss>0) {
+      untilTime=latestLoss+InpCooldownMinutes*60;
+      return TimeCurrent()<untilTime;
+   }
+   return false;
+}
+
 bool ReconcileClaimedOrders() {
    if(!DemoGuard() || !TerminalInfoInteger(TERMINAL_CONNECTED)) return false;
    string response; int code;
@@ -267,6 +309,26 @@ void ProcessNextOrder() {
    req.comment="AA"+StringSubstr(id,0,20);
    req.type_time=ORDER_TIME_GTC;
    req.type_filling=fillingMode;
+
+   double estimatedLoss=0.0;
+   if(!OrderCalcProfit(req.type,tradeSymbol,volume,req.price,sl,estimatedLoss) ||
+      !MathIsValidNumber(estimatedLoss) || estimatedLoss>=0 || -estimatedLoss>InpMaxRiskUSD+0.01) {
+      string riskMsg=StringFormat("Risk guard blocked order: estimated SL loss %.2f USD exceeds %.2f USD or calculation failed.",-estimatedLoss,InpMaxRiskUSD);
+      string riskBody=StringFormat("{\\"status\\":\\"REJECTED\\",\\"message\\":\\"%s\\",\\"ticket\\":null,\\"executionPrice\\":null}",JsonEscape(riskMsg));
+      ReportOrderResult(id,riskBody); Print("AEGIS risk guard: ",riskMsg); return;
+   }
+   double dailyPnl=TodayRealizedPnl();
+   if(dailyPnl<=-InpMaxDailyRealizedLossUSD) {
+      string dailyMsg=StringFormat("Daily realized loss limit reached: %.2f USD (limit %.2f).",dailyPnl,InpMaxDailyRealizedLossUSD);
+      string dailyBody=StringFormat("{\\"status\\":\\"REJECTED\\",\\"message\\":\\"%s\\",\\"ticket\\":null,\\"executionPrice\\":null}",JsonEscape(dailyMsg));
+      ReportOrderResult(id,dailyBody); return;
+   }
+   datetime cooldownUntil=0;
+   if(ConsecutiveLossCooldownActive(cooldownUntil)) {
+      string cooldownMsg=StringFormat("Consecutive-loss cooldown active until %s.",TimeToString(cooldownUntil,TIME_DATE|TIME_MINUTES));
+      string cooldownBody=StringFormat("{\\"status\\":\\"REJECTED\\",\\"message\\":\\"%s\\",\\"ticket\\":null,\\"executionPrice\\":null}",JsonEscape(cooldownMsg));
+      ReportOrderResult(id,cooldownBody); return;
+   }
 
    // Preflight the exact request with the terminal/broker before sending it.
    // A successful check is not an execution; OrderSend remains a separate step.
