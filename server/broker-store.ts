@@ -171,7 +171,7 @@ export async function updateOrder(id: string, result: any) {
   const message = String(result?.message || '').slice(0, 500);
   // An EXECUTED acknowledgement must carry broker evidence. Do not mark an order
   // executed from an empty/malformed EA response or silently persist a null price.
-  if (status === 'EXECUTED' && (!ticket || !/^\\d+$/.test(ticket) || !Number.isFinite(price) || price <= 0 || !Number.isFinite(executionVolume) || executionVolume <= 0)) {
+  if (status === 'EXECUTED' && (!ticket || !/^\d+$/.test(ticket) || !Number.isFinite(price) || price <= 0 || !Number.isFinite(executionVolume) || executionVolume <= 0)) {
     throw new Error('EXECUTED result requires a numeric MT5 deal ticket, positive execution price, and positive actual fill volume.');
   }
   const existing = await getPool().query('SELECT * FROM aegis_mt5_orders WHERE id=$1', [id]);
