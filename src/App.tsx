@@ -9,6 +9,7 @@ import { TradeJournal } from './components/TradeJournal.tsx';
 import { RiskCalculatorModal } from './components/RiskCalculatorModal.tsx';
 import { DisclaimerModal } from './components/DisclaimerModal.tsx';
 import { BrokerPanel } from './components/BrokerPanel.tsx';
+import { FreeAnalysisView } from './components/FreeAnalysisView.tsx';
 import {
   SignalAnalysisResult,
   JournalEntry,
@@ -265,6 +266,9 @@ export default function App() {
             )}
           </div>
         )}
+
+        {/* SEPARATE FREE HISTORICAL ANALYSIS — DOES NOT REPLACE THE EXISTING ANALYZER */}
+        {activeTab === 'free-analysis' && <FreeAnalysisView />}
 
         {/* TAB 2: LIVE CHART & SCANNER */}
         {activeTab === 'chart' && (
