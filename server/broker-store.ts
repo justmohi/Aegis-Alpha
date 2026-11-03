@@ -129,7 +129,9 @@ export async function claimNextOrder() {
   const client = await getPool().connect();
   try {
     await client.query('BEGIN');
-    await client.query("UPDATE aegis_mt5_orders SET status='EXPIRED', updated_at=NOW(), message='Order expired before execution' WHERE status IN ('QUEUED','CLAIMED') AND expires_at < NOW()");
+    // Expire only unclaimed work. CLAIMED means the EA may already have sent the broker order;
+    // never make it claimable/terminal merely because the queue TTL elapsed.
+    await client.query("UPDATE aegis_mt5_orders SET status='EXPIRED', updated_at=NOW(), message='Order expired before execution' WHERE status='QUEUED' AND expires_at < NOW()");
     const result = await client.query(`
       SELECT * FROM aegis_mt5_orders
       WHERE status='QUEUED' AND expires_at > NOW()
@@ -149,9 +151,14 @@ export async function updateOrder(id: string, result: any) {
   const statusMap: Record<string,string> = { EXECUTED: 'EXECUTED', REJECTED: 'REJECTED', FAILED: 'FAILED' };
   const status = statusMap[String(result?.status || '').toUpperCase()];
   if (!status) throw new Error('Invalid execution status.');
-  const ticket = result?.ticket == null ? null : String(result.ticket).slice(0, 64);
+  const ticket = result?.ticket == null ? null : String(result.ticket).trim().slice(0, 64);
   const price = Number(result?.executionPrice);
   const message = String(result?.message || '').slice(0, 500);
+  // An EXECUTED acknowledgement must carry broker evidence. Do not mark an order
+  // executed from an empty/malformed EA response or silently persist a null price.
+  if (status === 'EXECUTED' && (!ticket || !/^\\d+$/.test(ticket) || !Number.isFinite(price) || price <= 0)) {
+    throw new Error('EXECUTED result requires a numeric MT5 deal ticket and a positive execution price.');
+  }
   const updated = await getPool().query(`
     UPDATE aegis_mt5_orders SET status=$2, updated_at=NOW(), mt5_ticket=$3,
       execution_price=$4, message=$5 WHERE id=$1 AND status IN ('CLAIMED','QUEUED') RETURNING *
