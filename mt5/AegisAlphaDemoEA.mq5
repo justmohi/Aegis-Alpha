@@ -32,7 +32,7 @@ bool IsGoldSymbol(string symbol) {
    StringReplace(normalized,"/","");
    StringReplace(normalized,"_","");
    StringReplace(normalized,"-","");
-   return (normalized=="XAUUSD" || normalized=="XAUUSDm" || normalized=="XAUUSD.");
+   return (normalized=="XAUUSD" || normalized=="XAUUSDM" || normalized=="XAUUSD.");
 }
 
 bool ValidBrokerVolume(string symbol,double volume) {
