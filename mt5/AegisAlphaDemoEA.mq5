@@ -64,6 +64,22 @@ bool SelectSupportedFilling(string symbol,ENUM_ORDER_TYPE_FILLING &fillingMode) 
    return false;
 }
 
+
+string JsonEscape(string value) {
+   string escaped="";
+   for(int i=0;i<StringLen(value);i++) {
+      ushort ch=StringGetCharacter(value,i);
+      if(ch=='"') escaped+="\\\"";
+      else if(ch=='\\') escaped+="\\\\";
+      else if(ch=='\n') escaped+="\\n";
+      else if(ch=='\r') escaped+="\\r";
+      else if(ch=='\t') escaped+="\\t";
+      else if(ch<32) escaped+=" ";
+      else escaped+=ShortToString(ch);
+   }
+   return escaped;
+}
+
 string JsonValue(string json, string key) {
    string needle="\"" + key + "\"";
    int p=StringFind(json,needle);
@@ -120,7 +136,8 @@ bool Request(string method,string route,string body,string &response,int &status
 void SendHeartbeat() {
    if(!DemoGuard()) return;
    string body=StringFormat("{\"demo\":true,\"server\":\"%s\",\"login\":\"%I64d\",\"company\":\"%s\",\"symbol\":\"%s\",\"connected\":%s,\"terminalBuild\":\"%d\"}",
-      AccountInfoString(ACCOUNT_SERVER),(long)AccountInfoInteger(ACCOUNT_LOGIN),AccountInfoString(ACCOUNT_COMPANY),_Symbol,
+      JsonEscape(AccountInfoString(ACCOUNT_SERVER)),(long)AccountInfoInteger(ACCOUNT_LOGIN),
+      JsonEscape(AccountInfoString(ACCOUNT_COMPANY)),JsonEscape(_Symbol),
       (TerminalInfoInteger(TERMINAL_CONNECTED)?"true":"false"),(int)TerminalInfoInteger(TERMINAL_BUILD));
    string response; int code; Request("POST","/api/broker/mt5/heartbeat",body,response,code);
 }
@@ -147,7 +164,7 @@ void ProcessNextOrder() {
    }
    if(SymbolInfoInteger(tradeSymbol,SYMBOL_TRADE_MODE)==SYMBOL_TRADE_MODE_DISABLED ||
       !ValidBrokerVolume(tradeSymbol,volume)) {
-      string msg="{\\"status\\":\\"REJECTED\\",\\"message\\":\\"Broker symbol is disabled or volume violates broker min/max/step\\",\\"ticket\\":null,\\"executionPrice\\":null}";
+      string msg="{\"status\":\"REJECTED\",\"message\":\"Broker symbol is disabled or volume violates broker min/max/step\",\"ticket\":null,\"executionPrice\":null}";
       Request("POST","/api/broker/mt5/orders/"+id+"/result",msg,response,code); return;
    }
    double ask=SymbolInfoDouble(tradeSymbol,SYMBOL_ASK), bid=SymbolInfoDouble(tradeSymbol,SYMBOL_BID);
@@ -160,12 +177,12 @@ void ProcessNextOrder() {
    bool invalidStops=(side=="BUY" && (sl>=ask || tp<=ask || ask-sl<minDistance || tp-ask<minDistance)) ||
                      (side=="SELL" && (sl<=bid || tp>=bid || sl-bid<minDistance || bid-tp<minDistance));
    if(ask<=0 || bid<=0 || point<=0 || invalidStops) {
-      string msg="{\\"status\\":\\"REJECTED\\",\\"message\\":\\"Invalid quote or SL/TP direction/minimum stop distance\\",\\"ticket\\":null,\\"executionPrice\\":null}";
+      string msg="{\"status\":\"REJECTED\",\"message\":\"Invalid quote or SL/TP direction/minimum stop distance\",\"ticket\":null,\"executionPrice\":null}";
       Request("POST","/api/broker/mt5/orders/"+id+"/result",msg,response,code); return;
    }
    ENUM_ORDER_TYPE_FILLING fillingMode;
    if(!SelectSupportedFilling(tradeSymbol,fillingMode)) {
-      string msg="{\\"status\\":\\"REJECTED\\",\\"message\\":\\"Broker execution filling mode is unsupported\\",\\"ticket\\":null,\\"executionPrice\\":null}";
+      string msg="{\"status\":\"REJECTED\",\"message\":\"Broker execution filling mode is unsupported\",\"ticket\":null,\"executionPrice\":null}";
       Request("POST","/api/broker/mt5/orders/"+id+"/result",msg,response,code); return;
    }
    MqlTradeRequest req={}; MqlTradeResult res={};
@@ -177,10 +194,10 @@ void ProcessNextOrder() {
    req.type_time=ORDER_TIME_GTC;
    req.type_filling=fillingMode;
    if(!OrderSend(req,res) || (res.retcode!=TRADE_RETCODE_DONE && res.retcode!=TRADE_RETCODE_DONE_PARTIAL)) {
-      string msg=StringFormat("{\"status\":\"FAILED\",\"message\":\"OrderSend retcode %u: %s\",\"ticket\":\"%I64u\",\"executionPrice\":%.8f}",res.retcode,res.comment,res.order,res.price);
+      string msg=StringFormat("{\"status\":\"FAILED\",\"message\":\"OrderSend retcode %u: %s\",\"ticket\":\"%I64u\",\"executionPrice\":%.8f}",res.retcode,JsonEscape(res.comment),res.order,res.price);
       Request("POST","/api/broker/mt5/orders/"+id+"/result",msg,response,code); return;
    }
-   string msg=StringFormat("{\"status\":\"EXECUTED\",\"message\":\"%s\",\"ticket\":\"%I64u\",\"executionPrice\":%.8f}",res.comment,res.deal,res.price);
+   string msg=StringFormat("{\"status\":\"EXECUTED\",\"message\":\"%s\",\"ticket\":\"%I64u\",\"executionPrice\":%.8f}",JsonEscape(res.comment),res.deal,res.price);
    Request("POST","/api/broker/mt5/orders/"+id+"/result",msg,response,code);
 }
 
