@@ -40,11 +40,15 @@ async function ensureSchema() {
         signal_id TEXT NOT NULL UNIQUE,
         mt5_ticket TEXT,
         execution_price NUMERIC(20,8),
+        execution_volume NUMERIC(8,3),
         message TEXT,
         payload JSONB NOT NULL
       );
       CREATE INDEX IF NOT EXISTS aegis_mt5_orders_status_created ON aegis_mt5_orders(status, created_at);
-    `).then(() => {});
+    `).then(async () => {
+      // Idempotent migration for databases created before actual fill tracking.
+      await getPool().query('ALTER TABLE aegis_mt5_orders ADD COLUMN IF NOT EXISTS execution_volume NUMERIC(8,3)');
+    });
   }
   return schemaReady;
 }
@@ -53,7 +57,7 @@ export type BrokerOrder = {
   id: string; createdAt: string; expiresAt: string; status: string;
   symbol: string; side: 'BUY'|'SELL'; volume: number; entryPrice: number;
   stopLoss: number; takeProfit: number; signalId: string;
-  mt5Ticket?: string|null; executionPrice?: number|null; message?: string|null;
+  mt5Ticket?: string|null; executionPrice?: number|null; executionVolume?: number|null; message?: string|null;
 };
 
 function mapOrder(row: any): BrokerOrder {
@@ -64,6 +68,7 @@ function mapOrder(row: any): BrokerOrder {
     entryPrice: Number(row.entry_price), stopLoss: Number(row.stop_loss),
     takeProfit: Number(row.take_profit), signalId: row.signal_id,
     mt5Ticket: row.mt5_ticket, executionPrice: row.execution_price == null ? null : Number(row.execution_price),
+    executionVolume: row.execution_volume == null ? null : Number(row.execution_volume),
     message: row.message,
   };
 }
@@ -153,16 +158,17 @@ export async function updateOrder(id: string, result: any) {
   if (!status) throw new Error('Invalid execution status.');
   const ticket = result?.ticket == null ? null : String(result.ticket).trim().slice(0, 64);
   const price = Number(result?.executionPrice);
+  const executionVolume = Number(result?.executionVolume);
   const message = String(result?.message || '').slice(0, 500);
   // An EXECUTED acknowledgement must carry broker evidence. Do not mark an order
   // executed from an empty/malformed EA response or silently persist a null price.
-  if (status === 'EXECUTED' && (!ticket || !/^\\d+$/.test(ticket) || !Number.isFinite(price) || price <= 0)) {
-    throw new Error('EXECUTED result requires a numeric MT5 deal ticket and a positive execution price.');
+  if (status === 'EXECUTED' && (!ticket || !/^\\d+$/.test(ticket) || !Number.isFinite(price) || price <= 0 || !Number.isFinite(executionVolume) || executionVolume <= 0)) {
+    throw new Error('EXECUTED result requires a numeric MT5 deal ticket, positive execution price, and positive actual fill volume.');
   }
   const updated = await getPool().query(`
     UPDATE aegis_mt5_orders SET status=$2, updated_at=NOW(), mt5_ticket=$3,
-      execution_price=$4, message=$5 WHERE id=$1 AND status IN ('CLAIMED','QUEUED') RETURNING *
-  `, [id, status, ticket, Number.isFinite(price) && price > 0 ? price : null, message]);
-  if (!updated.rows[0]) throw new Error('Order not found or no longer awaiting execution update.');
+      execution_price=$4, execution_volume=$5, message=$6 WHERE id=$1 AND status IN ('CLAIMED','QUEUED') AND ($2 <> 'EXECUTED' OR $5 <= volume + 0.0005) RETURNING *
+  `, [id, status, ticket, Number.isFinite(price) && price > 0 ? price : null, Number.isFinite(executionVolume) && executionVolume > 0 ? executionVolume : null, message]);
+  if (!updated.rows[0]) throw new Error('Order not found, already finalized, or reported fill volume exceeds the approved order volume.');
   return mapOrder(updated.rows[0]);
 }
