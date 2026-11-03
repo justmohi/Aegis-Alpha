@@ -65,13 +65,42 @@ bool SelectSupportedFilling(string symbol,ENUM_ORDER_TYPE_FILLING &fillingMode) 
 }
 
 string JsonValue(string json, string key) {
-   string needle="\"" + key + "\":";
-   int p=StringFind(json,needle); if(p<0) return "";
+   string needle="\"" + key + "\"";
+   int p=StringFind(json,needle);
+   if(p<0) return "";
    p+=StringLen(needle);
-   while(p<StringLen(json) && (StringGetCharacter(json,p)==' ' || StringGetCharacter(json,p)=='\"')) p++;
-   int end=p;
-   while(end<StringLen(json) && StringGetCharacter(json,end)!='\"' && StringGetCharacter(json,end)!=',' && StringGetCharacter(json,end)!='}') end++;
-   return StringSubstr(json,p,end-p);
+   while(p<StringLen(json) && (StringGetCharacter(json,p)==' ' || StringGetCharacter(json,p)=='\t' || StringGetCharacter(json,p)=='\r' || StringGetCharacter(json,p)=='\n')) p++;
+   if(p>=StringLen(json) || StringGetCharacter(json,p)!=':') return "";
+   p++;
+   while(p<StringLen(json) && (StringGetCharacter(json,p)==' ' || StringGetCharacter(json,p)=='\t' || StringGetCharacter(json,p)=='\r' || StringGetCharacter(json,p)=='\n')) p++;
+   if(p>=StringLen(json)) return "";
+   if(StringGetCharacter(json,p)=='"') {
+      p++;
+      string value="";
+      while(p<StringLen(json)) {
+         ushort ch=StringGetCharacter(json,p);
+         if(ch=='"') return value;
+         if(ch=='\\' && p+1<StringLen(json)) {
+            p++;
+            ushort escaped=StringGetCharacter(json,p);
+            if(escaped=='"' || escaped=='\\' || escaped=='/') value+=ShortToString(escaped);
+            else if(escaped=='n') value+=" ";
+            else if(escaped=='r' || escaped=='t') value+=" ";
+            else return "";
+         } else {
+            value+=StringSubstr(json,p,1);
+         }
+         p++;
+      }
+      return "";
+   }
+   int valueStart=p;
+   while(p<StringLen(json) && StringGetCharacter(json,p)!=',' && StringGetCharacter(json,p)!='}' &&
+         StringGetCharacter(json,p)!=' ' && StringGetCharacter(json,p)!='\t' &&
+         StringGetCharacter(json,p)!='\r' && StringGetCharacter(json,p)!='\n') p++;
+   string value=StringSubstr(json,valueStart,p-valueStart);
+   if(value=="null" || value=="true" || value=="false") return "";
+   return value;
 }
 
 bool Request(string method,string route,string body,string &response,int &status) {
