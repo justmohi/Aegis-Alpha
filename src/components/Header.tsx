@@ -22,7 +22,7 @@ import {
 } from 'lucide-react';
 import { TwelveDataStatus, ConnectionDiagnosticResult } from '../types/trading.ts';
 
-export type NavTab = 'analyzer' | 'free-analysis' | 'chart' | 'backtest' | 'journal' | 'calculator' | 'broker';
+export type NavTab = 'analyzer' | 'chart' | 'backtest' | 'journal' | 'calculator';
 
 interface HeaderProps {
   activeTab: NavTab;
@@ -87,7 +87,7 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   const isConnected = Boolean(marketStatus?.configured && diagnostics?.providerErrorCategory === 'NONE');
-  const isDegraded = Boolean(marketStatus?.configured && diagnostics?.providerErrorCategory !== 'NONE' && diagnostics?.providerErrorCategory !== 'NOT_TESTED');
+  const isDegraded = Boolean(marketStatus?.configured && diagnostics?.providerErrorCategory !== 'NONE');
 
   return (
     <>
@@ -126,18 +126,6 @@ export const Header: React.FC<HeaderProps> = ({
               >
                 <Activity className="w-4 h-4" />
                 <span>Analyzer</span>
-              </button>
-
-              <button
-                onClick={() => setActiveTab('free-analysis')}
-                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-all ${
-                  activeTab === 'free-analysis'
-                    ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 shadow-sm'
-                    : 'text-slate-300 hover:text-white hover:bg-slate-800/50'
-                }`}
-              >
-                <Activity className="w-4 h-4" />
-                <span>Free Analysis</span>
               </button>
 
               <button
@@ -182,18 +170,6 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
 
               <button
-                onClick={() => setActiveTab('broker')}
-                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-all ${
-                  activeTab === 'broker'
-                    ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30 shadow-sm'
-                    : 'text-slate-300 hover:text-white hover:bg-slate-800/50'
-                }`}
-              >
-                <Server className="w-4 h-4" />
-                <span className="hidden md:inline">Broker</span>
-              </button>
-
-              <button
                 onClick={() => setActiveTab('calculator')}
                 className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-all ${
                   activeTab === 'calculator'
@@ -227,7 +203,7 @@ export const Header: React.FC<HeaderProps> = ({
                 <Zap className="w-3.5 h-3.5" />
                 <span>Twelve Data:</span>
                 <span className="font-semibold">
-                  {isConnected ? 'Connected' : isDegraded ? 'Degraded' : marketStatus?.configured ? 'Awaiting Probe' : 'Disconnected'}
+                  {isConnected ? 'Connected' : isDegraded ? 'Degraded' : 'Disconnected'}
                 </span>
               </button>
 
@@ -346,12 +322,10 @@ export const Header: React.FC<HeaderProps> = ({
                   className={`font-bold px-2 py-0.5 rounded text-[11px] ${
                     diagnostics?.providerErrorCategory === 'NONE'
                       ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                      : diagnostics?.providerErrorCategory === 'NOT_TESTED'
-                        ? 'bg-slate-700/50 text-slate-300 border border-slate-600'
-                        : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                      : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
                   }`}
                 >
-                  {diagnostics?.providerErrorCategory || 'NOT_TESTED'}
+                  {diagnostics?.providerErrorCategory || 'MISSING_API_KEY'}
                 </span>
               </div>
             </div>
