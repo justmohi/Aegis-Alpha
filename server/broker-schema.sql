@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS aegis_mt5_orders (
   signal_id TEXT NOT NULL UNIQUE,
   mt5_ticket TEXT,
   execution_price NUMERIC(20,8),
+  execution_volume NUMERIC(8,3),
   message TEXT,
   payload JSONB NOT NULL
 );
