@@ -17,6 +17,7 @@ import {
   DeterministicSignal,
 } from './src/utils/technical-analysis.ts';
 import { INSTRUMENT_SPECS } from './src/utils/trading-math.ts';
+import { assessSignalQuality } from './src/utils/signal-quality.ts';
 import {
   brokerStatus, heartbeat, createOrder, listOrders, listClaimedOrders, claimNextOrder, updateOrder,
 } from './server/broker-store.ts';
@@ -493,6 +494,17 @@ Return JSON in this format:
       }
     }
 
+    // Signal quality is deterministic and separate from AI narrative synthesis.
+    const signalQuality = assessSignalQuality({
+      score: deterministicSignal.confidenceScore,
+      decision: deterministicSignal.decision,
+      hasTradePlan: Boolean(deterministicSignal.tradePlan),
+      isLiveVerified: isLiveFeed,
+      isStale: isFeedStale,
+      htfRequired: includeHTF,
+      htfVerified: htfFullyVerified,
+    });
+
     // Assemble final institutional report
     const responsePayload = {
       id: `SIG-${Date.now()}`,
@@ -500,6 +512,7 @@ Return JSON in this format:
       decision: deterministicSignal.decision,
       confidenceScore: deterministicSignal.confidenceScore,
       confidenceBreakdown: deterministicSignal.confidenceBreakdown,
+      signalQuality,
       setupStatus: deterministicSignal.setupStatus,
       instrument: symbol,
       timeframe,
