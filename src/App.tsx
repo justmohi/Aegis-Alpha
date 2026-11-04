@@ -8,8 +8,6 @@ import { BacktestView } from './components/BacktestView.tsx';
 import { TradeJournal } from './components/TradeJournal.tsx';
 import { RiskCalculatorModal } from './components/RiskCalculatorModal.tsx';
 import { DisclaimerModal } from './components/DisclaimerModal.tsx';
-import { BrokerPanel } from './components/BrokerPanel.tsx';
-import { FreeAnalysisView } from './components/FreeAnalysisView.tsx';
 import {
   SignalAnalysisResult,
   JournalEntry,
@@ -267,9 +265,6 @@ export default function App() {
           </div>
         )}
 
-        {/* SEPARATE FREE HISTORICAL ANALYSIS — DOES NOT REPLACE THE EXISTING ANALYZER */}
-        {activeTab === 'free-analysis' && <FreeAnalysisView />}
-
         {/* TAB 2: LIVE CHART & SCANNER */}
         {activeTab === 'chart' && (
           <div className="space-y-6">
@@ -297,13 +292,6 @@ export default function App() {
               onDeleteEntry={handleDeleteEntry}
               onClearAll={handleClearAllJournal}
             />
-          </div>
-        )}
-
-        {/* EXNESS MT5 DEMO BROKER */}
-        {activeTab === 'broker' && (
-          <div className="space-y-6">
-            <BrokerPanel signal={analysisResult} />
           </div>
         )}
 
@@ -355,7 +343,7 @@ export default function App() {
               Risk Disclosures
             </button>
             <span className="text-slate-600">&bull;</span>
-            <span>Exness MT5 Demo Bridge (Demo-only)</span>
+            <span>No Live Broker Routing</span>
             <span className="text-slate-600">&bull;</span>
             <span className="text-emerald-400">System Nominal</span>
           </div>

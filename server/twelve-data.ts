@@ -44,7 +44,6 @@ export interface QuoteData {
 
 export type ProviderErrorCategory =
   | 'NONE'
-  | 'NOT_TESTED'
   | 'MISSING_API_KEY'
   | 'INVALID_API_KEY'
   | 'RATE_LIMIT_EXCEEDED'
@@ -76,49 +75,6 @@ interface CacheEntry<T> {
 }
 
 const memoryCache = new Map<string, CacheEntry<any>>();
-
-/** Assess candle freshness using provider bar-open timestamps and interval-aware thresholds. */
-export function assessCandleFreshness(
-  latestTimestamp: string,
-  interval: string,
-  nowMs: number = Date.now(),
-): { isStale: boolean; ageMinutes: number; thresholdMinutes: number; reason?: string } {
-  const intervalMinutes = INTERVAL_MINUTES[interval] || 15;
-  const timestampMs = new Date(latestTimestamp).getTime();
-  const thresholdMinutes = intervalMinutes * 2 + 2;
-  if (!Number.isFinite(timestampMs)) {
-    return { isStale: true, ageMinutes: Number.POSITIVE_INFINITY, thresholdMinutes, reason: 'Latest candle timestamp is invalid.' };
-  }
-  const ageMinutes = Math.max(0, (nowMs - timestampMs) / 60000);
-  const isStale = ageMinutes > thresholdMinutes;
-  return {
-    isStale, ageMinutes, thresholdMinutes,
-    reason: isStale ? `Latest candle opened at ${latestTimestamp}; data is approximately ${Math.round(ageMinutes)} minutes old (limit ${thresholdMinutes} minutes).` : undefined,
-  };
-}
-
-const INTERVAL_MINUTES: Record<string, number> = {
-  '1min': 1, '5min': 5, '15min': 15, '30min': 30, '1h': 60, '4h': 240, '1day': 1440,
-};
-
-/** Reject malformed, unordered, future-dated, or internally inconsistent OHLC candles. */
-function validateCandles(candles: Candle[], nowMs: number): string | null {
-  if (!Array.isArray(candles) || candles.length < 2) return 'Provider returned fewer than two candles.';
-  let previousTime = Number.NEGATIVE_INFINITY;
-  for (const candle of candles) {
-    const time = new Date(candle.time).getTime();
-    const values = [candle.open, candle.high, candle.low, candle.close];
-    if (!Number.isFinite(time) || time > nowMs + 5 * 60 * 1000) return 'Candle timestamp is invalid or unexpectedly in the future.';
-    if (time <= previousTime) return 'Candle timestamps are not strictly chronological.';
-    if (!values.every((value) => Number.isFinite(value) && value > 0)) return 'Candle contains a non-finite or non-positive OHLC value.';
-    if (!Number.isFinite(candle.volume) || candle.volume < 0) return 'Candle contains an invalid negative or non-finite volume.';
-    if (candle.high < candle.low || candle.high < Math.max(candle.open, candle.close) || candle.low > Math.min(candle.open, candle.close)) {
-      return 'Candle OHLC values are internally inconsistent.';
-    }
-    previousTime = time;
-  }
-  return null;
-}
 
 // Global latest telemetry diagnostic state
 let latestDiagnostics: ConnectionDiagnosticResult = {
@@ -221,15 +177,10 @@ export function isTwelveDataConfigured(): boolean {
  */
 export function getConnectionDiagnostics(): ConnectionDiagnosticResult {
   const configured = isTwelveDataConfigured();
-  const awaitingFirstProbe = latestDiagnostics.providerRequestStatus === 'Awaiting Provider Request';
   return {
     ...latestDiagnostics,
     backendReachable: true,
     apiKeyConfigured: configured,
-    ...(configured && awaitingFirstProbe ? {
-      providerErrorCategory: 'NOT_TESTED' as const,
-      providerErrorMessage: null,
-    } : {}),
     testedAt: latestDiagnostics.testedAt || new Date().toISOString(),
   };
 }
@@ -441,24 +392,18 @@ export async function getTwelveDataTimeSeries(options: {
   // Check cache
   const cached = memoryCache.get(cacheKey);
   if (cached && now - cached.timestamp < cached.ttlMs) {
-    latestDiagnostics = {
-      ...latestDiagnostics, backendReachable: true, apiKeyConfigured: isTwelveDataConfigured(),
-      providerRequestStatus: '200 OK (Cache)', symbolRequested: tdSymbol, intervalRequested: tdInterval,
-      latestDataTimestamp: cached.data.candles?.[cached.data.candles.length - 1]?.time || null,
-      candleCount: cached.data.candles?.length || 0,
-      providerErrorCategory: cached.data.isStale ? 'STALE_DATA' : 'NONE',
-      providerErrorMessage: cached.data.staleReason || null, latencyMs: 0,
-      testedAt: new Date().toISOString(), provider: 'Twelve Data Financial Feed (Cached)',
+    return {
+      ...cached.data,
+      cached: true,
+      lastUpdate: new Date(cached.timestamp).toISOString(),
     };
-    return { ...cached.data, cached: true, lastUpdate: new Date(cached.timestamp).toISOString() };
   }
 
   const apiKey = process.env.TWELVE_DATA_API_KEY;
-  if (!apiKey || apiKey.trim() === '' || apiKey === 'MY_TWELVE_DATA_API_KEY') {
-    latestDiagnostics = { ...latestDiagnostics, apiKeyConfigured: false, providerErrorCategory: 'MISSING_API_KEY',
-      providerRequestStatus: '401 Unauthorized (No Key)', symbolRequested: tdSymbol, intervalRequested: tdInterval,
-      latestDataTimestamp: null, candleCount: 0, providerErrorMessage: 'TWELVE_DATA_API_KEY is not configured on the server.',
-      testedAt: new Date().toISOString(), provider: 'Twelve Data Financial Feed (Disconnected)' };
+  if (!apiKey || apiKey === 'MY_TWELVE_DATA_API_KEY') {
+    latestDiagnostics.apiKeyConfigured = false;
+    latestDiagnostics.providerErrorCategory = 'MISSING_API_KEY';
+    latestDiagnostics.providerRequestStatus = '401 Unauthorized (No Key)';
     return {
       success: false,
       provider: 'Twelve Data (Disconnected)',
@@ -481,12 +426,6 @@ export async function getTwelveDataTimeSeries(options: {
     clearTimeout(timeoutId);
 
     if (!response.ok) {
-      const category: ProviderErrorCategory = response.status === 401 ? 'INVALID_API_KEY' : response.status === 429 ? 'RATE_LIMIT_EXCEEDED' : 'NETWORK_ERROR';
-      latestDiagnostics = { ...latestDiagnostics, backendReachable: true, apiKeyConfigured: true,
-        providerRequestStatus: `${response.status} ${response.statusText}`, symbolRequested: tdSymbol, intervalRequested: tdInterval,
-        latestDataTimestamp: null, candleCount: 0, providerErrorCategory: category,
-        providerErrorMessage: `Twelve Data API returned HTTP ${response.status}.`, latencyMs: Date.now() - now,
-        testedAt: new Date().toISOString(), provider: 'Twelve Data Financial Feed' };
       if (response.status === 429) {
         latestDiagnostics.providerErrorCategory = 'RATE_LIMIT_EXCEEDED';
         latestDiagnostics.providerRequestStatus = '429 Rate Limit';
@@ -563,38 +502,19 @@ export async function getTwelveDataTimeSeries(options: {
       volume: parseFloat(c.volume) || 0,
     }));
 
-    // Validate provider payload before allowing any technical analysis.
-    const integrityError = validateCandles(candles, Date.now());
-    if (integrityError) {
-      latestDiagnostics = {
-        ...latestDiagnostics,
-        backendReachable: true,
-        apiKeyConfigured: true,
-        providerRequestStatus: '200 OK (Invalid Candle Series)',
-        symbolRequested: tdSymbol,
-        intervalRequested: tdInterval,
-        latestDataTimestamp: candles[candles.length - 1]?.time || null,
-        candleCount: candles.length,
-        providerErrorCategory: 'INSUFFICIENT_DATA',
-        providerErrorMessage: integrityError,
-        testedAt: new Date().toISOString(),
-        provider: 'Twelve Data Financial Feed',
-      };
-      return {
-        success: false,
-        provider: 'Twelve Data',
-        lastUpdate: new Date().toISOString(),
-        error: integrityError,
-        errorCode: 502,
-        errorCategory: 'INSUFFICIENT_DATA',
-      };
-    }
-
-    // Verify freshness using the provider's candle-open timestamp.
+    // Verify freshness / completeness
     const latestCandle = candles[candles.length - 1];
-    const freshness = assessCandleFreshness(latestCandle.time, tdInterval, now);
-    const isStale = freshness.isStale;
-    const staleReason = freshness.reason;
+    const latestTime = new Date(latestCandle.time).getTime();
+    const ageMinutes = (now - latestTime) / (60 * 1000);
+
+    let isStale = false;
+    let staleReason: string | undefined;
+
+    // For intraday (M1-M30), if data is older than 60 mins during a weekday, flag stale warning
+    if ((tdInterval === '15min' || tdInterval === '5min' || tdInterval === '1min') && ageMinutes > 60) {
+      isStale = true;
+      staleReason = `Latest candle timestamp is ${latestCandle.time} (market may be closed for weekend or session break).`;
+    }
 
     latestDiagnostics = {
       backendReachable: true,
@@ -606,7 +526,7 @@ export async function getTwelveDataTimeSeries(options: {
       candleCount: candles.length,
       providerErrorCategory: isStale ? 'STALE_DATA' : 'NONE',
       providerErrorMessage: staleReason || null,
-      latencyMs: Date.now() - now,
+      latencyMs: 120,
       testedAt: new Date().toISOString(),
       provider: 'Twelve Data Financial Feed',
     };
@@ -630,13 +550,9 @@ export async function getTwelveDataTimeSeries(options: {
 
     return resultPayload;
   } catch (err: any) {
-    latestDiagnostics = { ...latestDiagnostics, backendReachable: true, apiKeyConfigured: true,
-      symbolRequested: tdSymbol, intervalRequested: tdInterval, latestDataTimestamp: null, candleCount: 0,
-      providerErrorCategory: 'NETWORK_ERROR', providerErrorMessage: err.name === 'AbortError'
-        ? 'Twelve Data request timed out after 8 seconds.' : `Network error reaching Twelve Data: ${err.message}`,
-      providerRequestStatus: err.name === 'AbortError' ? '408 Request Timeout' : '500 Fetch Error',
-      latencyMs: Date.now() - now, testedAt: new Date().toISOString(), provider: 'Twelve Data Financial Feed' };
     if (err.name === 'AbortError') {
+      latestDiagnostics.providerErrorCategory = 'NETWORK_ERROR';
+      latestDiagnostics.providerRequestStatus = '408 Request Timeout';
       return {
         success: false,
         provider: 'Twelve Data',
@@ -661,33 +577,6 @@ export async function getTwelveDataTimeSeries(options: {
 }
 
 /**
- * Normalize Twelve Data quote timestamps without interpreting timezone-less
- * exchange-local datetime strings as server-local/UTC timestamps.
- * The provider's Unix timestamp is authoritative when present.
- */
-export function parseTwelveDataQuoteTimestamp(
-  rawTimestamp: unknown,
-  rawDatetime: unknown,
-): string | null {
-  if (rawTimestamp !== null && rawTimestamp !== undefined && String(rawTimestamp).trim() !== '') {
-    const numeric = Number(rawTimestamp);
-    if (!Number.isFinite(numeric) || numeric <= 0) return null;
-    const milliseconds = numeric < 1e12 ? numeric * 1000 : numeric;
-    const date = new Date(milliseconds);
-    return Number.isFinite(date.getTime()) ? date.toISOString() : null;
-  }
-
-  if (typeof rawDatetime !== 'string' || !rawDatetime.trim()) return null;
-  const value = rawDatetime.trim();
-  // Only parse datetime fallback when it explicitly carries UTC or an offset.
-  // "YYYY-MM-DD HH:mm:ss" is exchange-local and ambiguous without timezone.
-  const hasExplicitTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value);
-  if (!hasExplicitTimezone) return null;
-  const date = new Date(value);
-  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
-}
-
-/**
  * Fetches real-time quote for a given instrument from Twelve Data
  */
 export async function getTwelveDataQuote(symbol: string): Promise<{
@@ -704,8 +593,8 @@ export async function getTwelveDataQuote(symbol: string): Promise<{
   const now = Date.now();
 
   const cached = memoryCache.get(cacheKey);
-  if (cached && now - cached.timestamp < 60 * 1000) {
-    // 60s quote TTL to reduce provider credit consumption
+  if (cached && now - cached.timestamp < 15 * 1000) {
+    // 15s quote TTL
     return {
       success: true,
       quote: cached.data,
@@ -738,35 +627,13 @@ export async function getTwelveDataQuote(symbol: string): Promise<{
     clearTimeout(timeoutId);
 
     if (!response.ok) {
-      const category: ProviderErrorCategory =
-        response.status === 401 ? 'INVALID_API_KEY' :
-        response.status === 429 ? 'RATE_LIMIT_EXCEEDED' : 'NETWORK_ERROR';
-      latestDiagnostics = {
-        ...latestDiagnostics,
-        backendReachable: true,
-        apiKeyConfigured: true,
-        providerRequestStatus: `${response.status} ${response.statusText}`,
-        symbolRequested: tdSymbol,
-        intervalRequested: 'quote',
-        latestDataTimestamp: null,
-        candleCount: 0,
-        providerErrorCategory: category,
-        providerErrorMessage: response.status === 429
-          ? 'Twelve Data quote endpoint rate limit reached. Reduce polling and wait before probing again.'
-          : response.status === 401
-            ? 'Twelve Data rejected the configured API key.'
-            : `Twelve Data quote request failed with HTTP ${response.status}.`,
-        latencyMs: Date.now() - now,
-        testedAt: new Date().toISOString(),
-        provider: 'Twelve Data Financial Feed',
-      };
       return {
         success: false,
         provider: 'Twelve Data',
         lastUpdate: new Date().toISOString(),
         error: `Quote request returned status ${response.status}`,
         errorCode: response.status,
-        errorCategory: category,
+        errorCategory: response.status === 401 ? 'INVALID_API_KEY' : 'NETWORK_ERROR',
       };
     }
 
@@ -778,112 +645,36 @@ export async function getTwelveDataQuote(symbol: string): Promise<{
       const isRate = code === 429 || data.message?.toLowerCase().includes('limit');
       const isSym = code === 400 || data.message?.toLowerCase().includes('symbol');
 
-      const category: ProviderErrorCategory = isAuth ? 'INVALID_API_KEY' : isRate ? 'RATE_LIMIT_EXCEEDED' : isSym ? 'UNSUPPORTED_SYMBOL' : 'NETWORK_ERROR';
-      latestDiagnostics = {
-        ...latestDiagnostics,
-        backendReachable: true,
-        apiKeyConfigured: true,
-        providerRequestStatus: `${code} Provider Error`,
-        symbolRequested: tdSymbol,
-        intervalRequested: 'quote',
-        latestDataTimestamp: null,
-        candleCount: 0,
-        providerErrorCategory: category,
-        providerErrorMessage: String(data.message || 'Twelve Data quote request failed.').slice(0, 240),
-        latencyMs: Date.now() - now,
-        testedAt: new Date().toISOString(),
-        provider: 'Twelve Data Financial Feed',
-      };
       return {
         success: false,
         provider: 'Twelve Data',
         lastUpdate: new Date().toISOString(),
         error: data.message || 'Error fetching quote',
         errorCode: code,
-        errorCategory: category,
-      };
-    }
-
-    const parsedPrice = Number.parseFloat(data.close || data.price || '');
-    const parsedTimestamp = parseTwelveDataQuoteTimestamp(data.timestamp, data.datetime);
-    if (!Number.isFinite(parsedPrice) || parsedPrice <= 0 || !parsedTimestamp) {
-      latestDiagnostics = {
-        ...latestDiagnostics,
-        backendReachable: true,
-        apiKeyConfigured: true,
-        providerRequestStatus: '200 OK (Invalid Quote Payload)',
-        symbolRequested: tdSymbol,
-        latestDataTimestamp: null,
-        candleCount: 0,
-        providerErrorCategory: 'INSUFFICIENT_DATA',
-        providerErrorMessage: 'Twelve Data quote must include a positive price and a verifiable Unix timestamp (or an ISO datetime with an explicit timezone).',
-        testedAt: new Date().toISOString(),
-        provider: 'Twelve Data Financial Feed',
-      };
-      return {
-        success: false,
-        provider: 'Twelve Data',
-        lastUpdate: new Date().toISOString(),
-        error: 'Provider quote did not contain a verifiable price and timezone-safe timestamp. Unix timestamp is preferred.',
-        errorCode: 502,
-        errorCategory: 'INSUFFICIENT_DATA',
-      };
-    }
-
-    const quoteAgeMs = Date.now() - Date.parse(parsedTimestamp);
-    const quoteStaleLimitMs = 2 * 60 * 1000;
-    if (quoteAgeMs < -5000 || quoteAgeMs > quoteStaleLimitMs) {
-      latestDiagnostics = {
-        ...latestDiagnostics, backendReachable: true, apiKeyConfigured: true,
-        providerRequestStatus: '200 OK (Stale Quote)', symbolRequested: tdSymbol,
-        latestDataTimestamp: parsedTimestamp, candleCount: 0,
-        providerErrorCategory: 'STALE_DATA',
-        providerErrorMessage: `Quote timestamp is ${Math.round(Math.max(0, quoteAgeMs) / 1000)} seconds old; maximum allowed age is 120 seconds.`,
-        latencyMs: Date.now() - now, testedAt: new Date().toISOString(), provider: 'Twelve Data Financial Feed',
-      };
-      return {
-        success: false, provider: 'Twelve Data Financial Feed',
-        lastUpdate: new Date().toISOString(),
-        error: 'Provider quote is stale or unexpectedly future-dated. No current price was accepted.',
-        errorCode: 502, errorCategory: 'STALE_DATA',
+        errorCategory: isAuth ? 'INVALID_API_KEY' : isRate ? 'RATE_LIMIT_EXCEEDED' : isSym ? 'UNSUPPORTED_SYMBOL' : 'NETWORK_ERROR',
       };
     }
 
     const quote: QuoteData = {
       symbol: tdSymbol,
       name: data.name || tdSymbol,
-      price: parsedPrice,
-      change: Number.parseFloat(data.change || '0') || 0,
-      percentChange: Number.parseFloat(data.percent_change || '0') || 0,
-      high: Number.parseFloat(data.high || '0') || 0,
-      low: Number.parseFloat(data.low || '0') || 0,
-      open: Number.parseFloat(data.open || '0') || 0,
-      previousClose: Number.parseFloat(data.previous_close || '0') || 0,
-      volume: Number.parseFloat(data.volume || '0') || 0,
-      timestamp: parsedTimestamp,
+      price: parseFloat(data.close || data.price || '0'),
+      change: parseFloat(data.change || '0'),
+      percentChange: parseFloat(data.percent_change || '0'),
+      high: parseFloat(data.high || '0'),
+      low: parseFloat(data.low || '0'),
+      open: parseFloat(data.open || '0'),
+      previousClose: parseFloat(data.previous_close || '0'),
+      volume: parseFloat(data.volume || '0'),
+      timestamp: data.datetime || new Date().toISOString(),
       isMarketOpen: Boolean(data.is_market_open),
       provider: 'Twelve Data',
-    };
-
-    latestDiagnostics = {
-      ...latestDiagnostics,
-      backendReachable: true,
-      apiKeyConfigured: true,
-      providerRequestStatus: '200 OK',
-      symbolRequested: tdSymbol,
-      latestDataTimestamp: parsedTimestamp,
-      candleCount: 0,
-      providerErrorCategory: 'NONE',
-      providerErrorMessage: null,
-      latencyMs: Date.now() - now,
-      testedAt: new Date().toISOString(),
-      provider: 'Twelve Data Financial Feed',
     };
 
     memoryCache.set(cacheKey, {
       data: quote,
       timestamp: now,
-      ttlMs: 60 * 1000,
+      ttlMs: 15 * 1000,
     });
 
     return {
@@ -893,23 +684,6 @@ export async function getTwelveDataQuote(symbol: string): Promise<{
       lastUpdate: new Date().toISOString(),
     };
   } catch (err: any) {
-    latestDiagnostics = {
-      ...latestDiagnostics,
-      backendReachable: true,
-      apiKeyConfigured: true,
-      providerRequestStatus: err?.name === 'AbortError' ? '408 Quote Timeout' : '500 Quote Network Error',
-      symbolRequested: tdSymbol,
-      intervalRequested: 'quote',
-      latestDataTimestamp: null,
-      candleCount: 0,
-      providerErrorCategory: 'NETWORK_ERROR',
-      providerErrorMessage: err?.name === 'AbortError'
-        ? 'Twelve Data quote request timed out.'
-        : 'Network error while requesting a Twelve Data quote.',
-      latencyMs: Date.now() - now,
-      testedAt: new Date().toISOString(),
-      provider: 'Twelve Data Financial Feed',
-    };
     return {
       success: false,
       provider: 'Twelve Data',

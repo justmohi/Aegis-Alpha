@@ -55,21 +55,12 @@ export interface TradePlan {
   atrBufferPips?: number;
 }
 
-export interface SignalQualityAssessment {
-  score: number;
-  grade: 'A+' | 'A' | 'B' | 'C' | 'Unqualified';
-  label: string;
-  tradeEligible: boolean;
-  blockers: string[];
-}
-
 export interface SignalAnalysisResult {
   id?: string;
   timestamp?: string;
   decision: SignalDecision;
   confidenceScore: number;
   confidenceBreakdown: ConfidenceBreakdown;
-  signalQuality?: SignalQualityAssessment;
   setupStatus: SetupStatus;
   instrument: string;
   timeframe: string;
@@ -143,7 +134,6 @@ export interface SampleChartFixture {
 
 export type ProviderErrorCategory =
   | 'NONE'
-  | 'NOT_TESTED'
   | 'MISSING_API_KEY'
   | 'INVALID_API_KEY'
   | 'RATE_LIMIT_EXCEEDED'

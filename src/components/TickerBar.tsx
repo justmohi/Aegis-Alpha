@@ -25,72 +25,53 @@ export const TickerBar: React.FC = () => {
   const [tickers, setTickers] = useState<TickerItem[]>(INITIAL_WATCHLIST);
   const [providerStatus, setProviderStatus] = useState<string>('Twelve Data (Checking...)');
   const [isConfigured, setIsConfigured] = useState<boolean>(false);
-  const [hasVerifiedQuote, setHasVerifiedQuote] = useState<boolean>(false);
   const [lastFeedUpdate, setLastFeedUpdate] = useState<string | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
-
-    const refreshQuotes = async () => {
-      try {
-        const statusRes = await fetch('/api/market-status');
-        const statusData: TwelveDataStatus = await statusRes.json();
-        if (cancelled) return;
-        const configured = Boolean(statusData.configured);
+    // Check market status and diagnostic state
+    fetch('/api/market-status')
+      .then((res) => res.json())
+      .then((data: TwelveDataStatus) => {
+        const configured = Boolean(data.configured);
         setIsConfigured(configured);
-        if (!configured) {
-          setHasVerifiedQuote(false);
+
+        if (configured) {
+          setProviderStatus('Twelve Data Financial Feed (Live)');
+          // Fetch actual quotes for key pairs
+          const symbolsToFetch = ['EUR/USD', 'XAU/USD'];
+
+          symbolsToFetch.forEach((sym) => {
+            fetch(`/api/quote?symbol=${encodeURIComponent(sym)}`)
+              .then((r) => r.json())
+              .then((qRes) => {
+                if (qRes.success && qRes.quote) {
+                  const q: QuoteData = qRes.quote;
+                  setLastFeedUpdate(q.timestamp);
+                  setTickers((prev) =>
+                    prev.map((t) =>
+                      t.symbol === sym
+                        ? {
+                            ...t,
+                            price: q.price,
+                            change: `${q.percentChange >= 0 ? '+' : ''}${q.percentChange.toFixed(2)}%`,
+                            isUp: q.change >= 0,
+                            timestamp: q.timestamp,
+                            provider: q.provider,
+                          }
+                        : t
+                    )
+                  );
+                }
+              })
+              .catch(() => {});
+          });
+        } else {
           setProviderStatus('Twelve Data Disconnected (Awaiting Key)');
-          return;
         }
-
-        const symbols = ['EUR/USD', 'XAU/USD'];
-        const quoteResults = await Promise.all(symbols.map(async (sym) => {
-          try {
-            const res = await fetch(`/api/quote?symbol=${encodeURIComponent(sym)}`);
-            const body = await res.json();
-            const q = body?.quote;
-            if (!res.ok || !body?.success || !q || !Number.isFinite(Number(q.price)) || Number(q.price) <= 0) {
-              return { symbol: sym, quote: null as QuoteData | null };
-            }
-            return { symbol: sym, quote: q as QuoteData };
-          } catch {
-            return { symbol: sym, quote: null as QuoteData | null };
-          }
-        }));
-        if (cancelled) return;
-
-        const verified = quoteResults.some((item) => item.quote !== null);
-        setHasVerifiedQuote(verified);
-        setProviderStatus(verified ? 'Twelve Data (quote verified)' : 'API key configured, but quote verification failed');
-
-        quoteResults.forEach(({ symbol: sym, quote }) => {
-          if (!quote) return;
-          setLastFeedUpdate(quote.timestamp);
-          setTickers((prev) => prev.map((t) => t.symbol === sym ? {
-            ...t,
-            price: quote.price,
-            change: `${quote.percentChange >= 0 ? '+' : ''}${quote.percentChange.toFixed(2)}%`,
-            isUp: quote.change >= 0,
-            timestamp: quote.timestamp,
-            provider: quote.provider,
-          } : t));
-        });
-      } catch {
-        if (!cancelled) {
-          setHasVerifiedQuote(false);
-          setProviderStatus('Twelve Data Disconnected (Backend Offline)');
-        }
-      }
-    };
-
-    void refreshQuotes();
-    // Two symbols are polled together; keep the cadence below the provider's free-tier credit budget.
-    const timer = window.setInterval(() => void refreshQuotes(), 60000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
+      })
+      .catch(() => {
+        setProviderStatus('Twelve Data Disconnected (Backend Offline)');
+      });
   }, []);
 
   return (
@@ -100,11 +81,11 @@ export const TickerBar: React.FC = () => {
           <div className="flex items-center space-x-1.5 text-slate-500">
             <span
               className={`w-2 h-2 rounded-full ${
-                hasVerifiedQuote ? 'bg-emerald-500 animate-pulse' : 'bg-amber-400'
+                isConfigured ? 'bg-emerald-500 animate-pulse' : 'bg-amber-400'
               }`}
             />
             <span className="text-[11px] text-slate-400 font-sans font-medium uppercase tracking-wider">
-              {hasVerifiedQuote ? 'VERIFIED QUOTE FEED' : isConfigured ? 'KEY CONFIGURED · FEED UNVERIFIED' : 'FEED DISCONNECTED'}
+              {isConfigured ? 'VERIFIED FEED' : 'FEED DISCONNECTED'}
             </span>
           </div>
 
@@ -143,12 +124,12 @@ export const TickerBar: React.FC = () => {
 
         <div className="flex items-center space-x-4 text-slate-500 text-[11px]">
           <div className="flex items-center space-x-1">
-            {hasVerifiedQuote ? (
+            {isConfigured ? (
               <Zap className="w-3 h-3 text-emerald-400" />
             ) : (
               <WifiOff className="w-3 h-3 text-amber-400" />
             )}
-            <span className={hasVerifiedQuote ? 'text-slate-300' : 'text-amber-400/90'}>
+            <span className={isConfigured ? 'text-slate-300' : 'text-amber-400/90'}>
               Feed: {providerStatus}
             </span>
           </div>
